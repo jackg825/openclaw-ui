@@ -16,7 +16,7 @@ const PAIRING_CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 export function ConnectPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { connect, sendDeviceRegistration } = useOpenClaw();
+  const { connect, disconnect, sendDeviceRegistration } = useOpenClaw();
   const status = useConnectionStore((s) => s.status);
   const error = useConnectionStore((s) => s.error);
   const setError = useConnectionStore((s) => s.setError);
@@ -155,6 +155,12 @@ export function ConnectPage() {
         {error && (
           <p className="text-sm text-destructive">{error}</p>
         )}
+        <button
+          className="text-sm text-muted-foreground underline hover:text-foreground"
+          onClick={() => { disconnect(); setMode('wizard'); }}
+        >
+          Cancel
+        </button>
       </div>
     );
   }
