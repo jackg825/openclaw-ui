@@ -1,5 +1,4 @@
 import type { Env, DeviceData } from './types.js';
-import { validateAuth, unauthorizedResponse } from './auth.js';
 import { getSignaling } from './storage.js';
 import { handleTurnCreds } from './routes/turn-creds.js';
 import { handleCreateRoom } from './routes/create-room.js';
@@ -25,6 +24,7 @@ const PUBLIC_ENDPOINTS = new Set([
   '/room-status',
   '/register-device',
   '/reconnect',
+  '/turn-creds',
 ]);
 
 export default {
@@ -90,6 +90,9 @@ export default {
           case '/reconnect':
             response = await handleReconnect(request, env);
             break;
+          case '/turn-creds':
+            response = await handleTurnCreds(request, env);
+            break;
           default:
             response = new Response(
               JSON.stringify({ error: 'Not Found' }),
@@ -102,29 +105,11 @@ export default {
         return response;
       }
 
-      // Auth-required endpoints
-      if (!validateAuth(request, env)) {
-        const res = unauthorizedResponse();
-        for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
-        return res;
-      }
-
-      let response: Response;
-      switch (url.pathname) {
-        case '/turn-creds':
-          response = await handleTurnCreds(request, env);
-          break;
-        default:
-          response = new Response(
-            JSON.stringify({ error: 'Not Found' }),
-            { status: 404, headers: { 'Content-Type': 'application/json' } },
-          );
-      }
-
-      for (const [k, v] of Object.entries(cors)) {
-        response.headers.set(k, v);
-      }
-      return response;
+      // Auth-required endpoints (none currently — all moved to public)
+      return new Response(
+        JSON.stringify({ error: 'Not Found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json', ...cors } },
+      );
     } catch (err) {
       console.error('[worker] Unhandled error:', err);
       return new Response(

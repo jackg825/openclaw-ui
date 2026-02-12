@@ -104,8 +104,8 @@ async function main(): Promise<void> {
     if (creds.iceServers) {
       turnServers = creds.iceServers;
     }
-  } catch {
-    console.log('[sidecar] TURN not available, using STUN only');
+  } catch (err) {
+    console.warn(`[sidecar] TURN not available: ${(err as Error).message}`);
   }
 
   // Create PeerConnection (answering peer)
@@ -127,20 +127,21 @@ async function main(): Promise<void> {
     console.log(`[sidecar] Connection state: ${state}`);
   });
 
-  // Handle incoming DataChannel
+  // Handle incoming DataChannel — single dc.onMessage to avoid setter overwrite
   pc.onDataChannel((dc) => {
     console.log(`[sidecar] DataChannel opened: ${dc.getLabel()}`);
     bridge.attach(dc);
 
-    // Listen for device-registration messages (Modes B and C)
-    if (needsRegistrationListener) {
-      dc.onMessage((raw) => {
+    dc.onMessage((raw) => {
+      const consumed = bridge.handleDataChannelMessage(raw);
+      if (!consumed && needsRegistrationListener) {
+        // Internal message not forwarded to gateway — check for device registration
         try {
           const text = typeof raw === 'string'
             ? raw
-            : raw instanceof ArrayBuffer
-              ? new TextDecoder().decode(raw)
-              : raw.toString();
+            : raw instanceof Buffer
+              ? raw.toString('utf-8')
+              : new TextDecoder().decode(raw as ArrayBuffer);
           const msg = JSON.parse(text);
           if (msg.type === 'device-registration' && msg.deviceToken) {
             const deviceCfg: DeviceConfig = {
@@ -151,14 +152,13 @@ async function main(): Promise<void> {
             };
             saveDeviceConfig(config.deviceConfigPath, deviceCfg);
             console.log('[sidecar] Device registered! Future connections will be automatic.');
-            // Send ack
             dc.sendMessage(JSON.stringify({ type: 'device-registration-ack' }));
           }
         } catch {
-          // Not a registration message, ignore (Bridge handles normal messages)
+          // Not a valid registration message
         }
-      });
-    }
+      }
+    });
   });
 
   // Listen for signaling messages (offers and ICE from browser)

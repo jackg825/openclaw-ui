@@ -66,7 +66,14 @@ export class WsSidecarSignaling {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roomId: this.roomId }),
     });
-    if (!res.ok) throw new Error(`TURN creds failed: ${res.status}`);
+    if (!res.ok) {
+      let detail = `${res.status}`;
+      try {
+        const body = await res.json() as { error?: string };
+        if (body.error) detail = `${res.status}: ${body.error}`;
+      } catch { /* ignore parse failure */ }
+      throw new Error(`TURN creds failed (${detail})`);
+    }
     return res.json() as Promise<TurnCredentials>;
   }
 
