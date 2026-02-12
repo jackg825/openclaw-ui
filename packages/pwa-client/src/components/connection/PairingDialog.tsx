@@ -14,26 +14,41 @@ import { useConnectionStore } from '@/stores/connection';
 import { useSettingsStore } from '@/stores/settings';
 
 interface PairingDialogProps {
-  onConnect: (signalingUrl: string, roomId: string) => void;
+  onConnect: (signalingUrl: string, codeOrRoomId: string) => void;
+  resolving?: boolean;
 }
 
-export function PairingDialog({ onConnect }: PairingDialogProps) {
+/** Pairing code format: XXXX-XXXX (alphanumeric, uppercase) */
+const PAIRING_CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+
+function formatPairingInput(raw: string): string {
+  // Strip non-alphanumeric, uppercase, auto-insert hyphen after 4 chars
+  const clean = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);
+  if (clean.length > 4) {
+    return `${clean.slice(0, 4)}-${clean.slice(4)}`;
+  }
+  return clean;
+}
+
+export function PairingDialog({ onConnect, resolving }: PairingDialogProps) {
   const defaultSignalingUrl = useSettingsStore((s) => s.defaultSignalingUrl);
-  const defaultRoomId = useSettingsStore((s) => s.defaultRoomId);
   const { status, error } = useConnectionStore();
 
   const [signalingUrl, setSignalingUrl] = useState(defaultSignalingUrl);
-  const [roomId, setRoomId] = useState(defaultRoomId);
+  const [code, setCode] = useState('');
 
   const isConnecting =
+    resolving ||
     status === 'signaling' ||
     status === 'connecting' ||
     status === 'authenticating';
 
+  const isPairingCode = PAIRING_CODE_RE.test(code);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!signalingUrl.trim() || !roomId.trim()) return;
-    onConnect(signalingUrl.trim(), roomId.trim());
+    if (!signalingUrl.trim() || !code.trim()) return;
+    onConnect(signalingUrl.trim(), code.trim());
   };
 
   return (
@@ -44,8 +59,8 @@ export function PairingDialog({ onConnect }: PairingDialogProps) {
           Connect to Gateway
         </CardTitle>
         <CardDescription>
-          Enter the signaling server URL and room ID to connect to your
-          OpenClaw gateway via WebRTC.
+          Enter the signaling server URL and the pairing code shown by your
+          sidecar to connect via WebRTC.
         </CardDescription>
       </CardHeader>
       <form onSubmit={handleSubmit}>
@@ -63,25 +78,37 @@ export function PairingDialog({ onConnect }: PairingDialogProps) {
             />
           </div>
           <div className="space-y-2">
-            <label htmlFor="room-id" className="text-sm font-medium">
-              Room ID
+            <label htmlFor="pairing-code" className="text-sm font-medium">
+              Pairing Code
             </label>
             <Input
-              id="room-id"
-              placeholder="my-room-id"
-              value={roomId}
-              onChange={(e) => setRoomId(e.target.value)}
+              id="pairing-code"
+              placeholder="XXXX-XXXX"
+              value={code}
+              onChange={(e) => setCode(formatPairingInput(e.target.value))}
               disabled={isConnecting}
+              className="font-mono text-lg tracking-widest"
+              maxLength={9}
+              autoComplete="off"
+              spellCheck={false}
             />
+            <p className="text-xs text-muted-foreground">
+              {isPairingCode
+                ? 'Pairing code detected'
+                : code
+                  ? 'Enter the 8-character code (e.g. GH9H-FT8Q)'
+                  : 'Shown in your sidecar terminal after startup'}
+            </p>
           </div>
           {error && (
             <p className="text-sm text-destructive">{error}</p>
           )}
           {isConnecting && (
             <p className="text-sm text-muted-foreground animate-pulse">
-              {status === 'signaling' && 'Exchanging signaling data...'}
-              {status === 'connecting' && 'Establishing WebRTC connection...'}
-              {status === 'authenticating' && 'Authenticating with gateway...'}
+              {resolving && 'Resolving pairing code...'}
+              {!resolving && status === 'signaling' && 'Exchanging signaling data...'}
+              {!resolving && status === 'connecting' && 'Establishing WebRTC connection...'}
+              {!resolving && status === 'authenticating' && 'Authenticating with gateway...'}
             </p>
           )}
         </CardContent>
@@ -89,7 +116,7 @@ export function PairingDialog({ onConnect }: PairingDialogProps) {
           <Button
             type="submit"
             className="w-full"
-            disabled={isConnecting || !signalingUrl.trim() || !roomId.trim()}
+            disabled={isConnecting || !signalingUrl.trim() || !code.trim()}
           >
             {isConnecting ? 'Connecting...' : 'Connect'}
           </Button>

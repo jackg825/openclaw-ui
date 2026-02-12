@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { OnboardingWizard } from '@/components/connection/OnboardingWizard';
 import { PairingDialog } from '@/components/connection/PairingDialog';
@@ -9,6 +9,9 @@ import { reconnect, resolveCode, registerDevice } from '@/lib/webrtc/pairing';
 import { Loader2, Settings } from 'lucide-react';
 
 type Mode = 'loading' | 'wizard' | 'manual';
+
+/** Pairing code format: XXXX-XXXX (alphanumeric, uppercase) */
+const PAIRING_CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
 export function ConnectPage() {
   const navigate = useNavigate();
@@ -29,6 +32,7 @@ export function ConnectPage() {
     return 'wizard';
   });
   const [autoReconnectAttempted, setAutoReconnectAttempted] = useState(false);
+  const [resolving, setResolving] = useState(false);
 
   // Navigate to chat on successful connection
   useEffect(() => {
@@ -103,10 +107,36 @@ export function ConnectPage() {
     }
   };
 
-  // Manual connect fallback
-  const handleManualConnect = (url: string, roomId: string) => {
+  // Manual connect — resolves pairing code if needed, then connects
+  const handleManualConnect = useCallback(async (url: string, codeOrRoomId: string) => {
+    let roomId = codeOrRoomId;
+
+    // Detect pairing code format and resolve to room ID
+    if (PAIRING_CODE_RE.test(codeOrRoomId)) {
+      setResolving(true);
+      try {
+        const result = await resolveCode(url, codeOrRoomId);
+        roomId = result.roomId;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to resolve pairing code');
+        setResolving(false);
+        return;
+      }
+      setResolving(false);
+    }
+
     connect(url, roomId);
-  };
+
+    // Register device for token-based reconnection
+    try {
+      const reg = await registerDevice(url, roomId);
+      setUserToken(reg.userToken);
+      setStableRoomId(reg.stableRoomId);
+      sendDeviceRegistration(reg.deviceToken, reg.stableRoomId);
+    } catch {
+      // Registration is optional — connection still works
+    }
+  }, [connect, setError, setUserToken, setStableRoomId, sendDeviceRegistration]);
 
   if (mode === 'loading') {
     return (
@@ -147,7 +177,7 @@ export function ConnectPage() {
         )}
         {mode === 'manual' && (
           <>
-            <PairingDialog onConnect={handleManualConnect} />
+            <PairingDialog onConnect={handleManualConnect} resolving={resolving} />
             <div className="text-center">
               <button
                 className="text-sm text-muted-foreground underline hover:text-foreground"
