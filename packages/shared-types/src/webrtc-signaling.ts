@@ -32,6 +32,8 @@ export interface DeviceInfo {
 export interface ReconnectResponse {
   stableRoomId: string;
   devices?: DeviceInfo[];
+  pairingCode?: string;
+  pairingExpiresAt?: string;
 }
 
 // ── WebSocket Signaling Protocol ──

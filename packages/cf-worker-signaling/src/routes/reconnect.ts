@@ -1,5 +1,6 @@
 import type { Env, UserData, DeviceData, RoomData } from '../types.js';
 import { getSignaling, putSignaling } from '../storage.js';
+import { createPairingCode, RECONNECT_EXPIRY_MINUTES } from '../pairing-utils.js';
 
 export async function handleReconnect(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
@@ -54,8 +55,14 @@ export async function handleReconnect(request: Request, env: Env): Promise<Respo
       }
     }
 
+    // Generate a fresh pairing code so new browsers can discover this room
+    const pairing = await createPairingCode(env, deviceData.stableRoomId, RECONNECT_EXPIRY_MINUTES);
+
     return new Response(
-      JSON.stringify({ stableRoomId: deviceData.stableRoomId }),
+      JSON.stringify({
+        stableRoomId: deviceData.stableRoomId,
+        ...(pairing && { pairingCode: pairing.pairingCode, pairingExpiresAt: pairing.expiresAt }),
+      }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     );
   }

@@ -24,15 +24,30 @@ async function resolveShortCode(signalingUrl: string, code: string): Promise<str
   return data.roomId;
 }
 
-async function reconnectWithToken(signalingUrl: string, deviceToken: string): Promise<string> {
+interface ReconnectResult {
+  stableRoomId: string;
+  pairingCode?: string;
+}
+
+async function reconnectWithToken(signalingUrl: string, deviceToken: string): Promise<ReconnectResult> {
   const res = await fetch(`${signalingUrl}/reconnect`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ deviceToken }),
   });
   if (!res.ok) throw new Error(`Reconnect failed: ${res.status}`);
-  const data = await res.json() as { stableRoomId: string };
-  return data.stableRoomId;
+  return res.json() as Promise<ReconnectResult>;
+}
+
+function displayPairingCode(code: string): void {
+  console.log('');
+  console.log('  ┌──────────────────────────────────────────────────┐');
+  console.log(`  │  Pairing code:  ${code}                        │`);
+  console.log('  │                                                  │');
+  console.log('  │  Open the OpenClaw PWA in your browser and       │');
+  console.log('  │  enter this code to connect.                     │');
+  console.log('  └──────────────────────────────────────────────────┘');
+  console.log('');
 }
 
 // ── Main ──
@@ -53,8 +68,9 @@ async function main(): Promise<void> {
     // Mode A: Quick Reconnect
     console.log('[sidecar] Reconnecting with registered device...');
     try {
-      const stableRoomId = await reconnectWithToken(config.signalingUrl, existingDevice.deviceToken);
-      config.roomId = stableRoomId;
+      const result = await reconnectWithToken(config.signalingUrl, existingDevice.deviceToken);
+      config.roomId = result.stableRoomId;
+      if (result.pairingCode) displayPairingCode(result.pairingCode);
     } catch (err) {
       console.warn(`[sidecar] Reconnect failed: ${(err as Error).message}`);
       console.log('[sidecar] Falling back to new pairing session...');
@@ -78,14 +94,7 @@ async function main(): Promise<void> {
     config.roomId = roomId;
     needsRegistrationListener = true;
 
-    console.log('');
-    console.log('  ┌──────────────────────────────────────────────────┐');
-    console.log(`  │  Pairing code:  ${pairingCode}                        │`);
-    console.log('  │                                                  │');
-    console.log('  │  Open the OpenClaw PWA in your browser and       │');
-    console.log(`  │  enter this code to connect.                     │`);
-    console.log('  └──────────────────────────────────────────────────┘');
-    console.log('');
+    displayPairingCode(pairingCode);
   }
 
   console.log(`[sidecar] Room:      ${config.roomId}`);
