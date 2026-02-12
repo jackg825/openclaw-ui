@@ -7,6 +7,7 @@ import { WsSignalingClient } from './ws-signaling-client';
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
 const STUN_SERVERS = ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'];
+const HANDSHAKE_TIMEOUT = 30_000; // 30s — max wait for offer→answer→DC open
 
 export class WebRTCConnectionManager extends EventTarget {
   private pc: RTCPeerConnection | null = null;
@@ -16,6 +17,7 @@ export class WebRTCConnectionManager extends EventTarget {
   private reconnection = new ReconnectionManager();
   private state: ConnectionState = 'idle';
   private messageHandlers: ((message: string) => void)[] = [];
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private roomId: string;
   private signalingUrl: string;
   private peerId: string;
@@ -70,6 +72,7 @@ export class WebRTCConnectionManager extends EventTarget {
       this.dc.onMessage((msg) => this.handleRawMessage(msg));
 
       this.dc.addEventListener('open', () => {
+        this.clearHandshakeTimer();
         this.setState('connected');
         this.reconnection.reset();
         this.signaling.close();
@@ -102,6 +105,20 @@ export class WebRTCConnectionManager extends EventTarget {
       this.signaling.onMessage((msg) => {
         this.handleSignalingMessage(msg);
       });
+
+      // 8. Detect signaling WebSocket drop (e.g., DO hibernation cleanup)
+      this.signaling.onDisconnect(() => {
+        if (this.state === 'connecting') {
+          this.handleDisconnect();
+        }
+      });
+
+      // 9. Handshake timeout — if DC doesn't open within 30s, treat as failure
+      this.handshakeTimer = setTimeout(() => {
+        if (this.state === 'connecting') {
+          this.handleDisconnect();
+        }
+      }, HANDSHAKE_TIMEOUT);
     } catch (err) {
       this.setState('failed');
       this.dispatchEvent(new CustomEvent('error', { detail: (err as Error).message }));
@@ -127,6 +144,7 @@ export class WebRTCConnectionManager extends EventTarget {
   }
 
   disconnect(): void {
+    this.clearHandshakeTimer();
     this.reconnection.cancel();
     this.signaling.close();
     this.dc?.close();
@@ -142,6 +160,13 @@ export class WebRTCConnectionManager extends EventTarget {
     this.state = state;
   }
 
+  private clearHandshakeTimer(): void {
+    if (this.handshakeTimer) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
+  }
+
   private handleRawMessage(raw: string): void {
     const assembled = this.chunker.receive(raw);
     if (assembled !== null) {
@@ -152,11 +177,15 @@ export class WebRTCConnectionManager extends EventTarget {
     }
   }
 
-  private handleSignalingMessage(msg: WsServerMessage): void {
+  private async handleSignalingMessage(msg: WsServerMessage): Promise<void> {
     switch (msg.type) {
       case 'answer':
         if (this.pc) {
-          this.pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+          try {
+            await this.pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+          } catch {
+            this.handleDisconnect();
+          }
         }
         break;
       case 'ice':

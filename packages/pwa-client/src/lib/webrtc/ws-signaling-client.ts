@@ -7,6 +7,7 @@ import type { WsServerMessage, TurnCredentials } from '@shared/webrtc-signaling'
 export class WsSignalingClient {
   private ws: WebSocket | null = null;
   private handlers: ((msg: WsServerMessage) => void)[] = [];
+  private disconnectHandlers: (() => void)[] = [];
   private baseUrl: string;
   private roomId: string;
   private peerId: string;
@@ -48,6 +49,14 @@ export class WsSignalingClient {
         // Ignore malformed messages
       }
     };
+
+    this.ws.onclose = () => {
+      for (const handler of this.disconnectHandlers) handler();
+    };
+
+    this.ws.onerror = () => {
+      for (const handler of this.disconnectHandlers) handler();
+    };
   }
 
   async sendOffer(sdp: string): Promise<void> {
@@ -83,10 +92,15 @@ export class WsSignalingClient {
     this.handlers.push(handler);
   }
 
+  onDisconnect(handler: () => void): void {
+    this.disconnectHandlers.push(handler);
+  }
+
   close(): void {
     this.ws?.close();
     this.ws = null;
     this.handlers = [];
+    this.disconnectHandlers = [];
   }
 
   private send(data: Record<string, unknown>): void {

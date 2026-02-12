@@ -41,6 +41,13 @@ export function ConnectPage() {
     }
   }, [status, navigate]);
 
+  // Fall back to wizard when connection fails
+  useEffect(() => {
+    if (status === 'failed' && mode === 'loading') {
+      setMode('wizard');
+    }
+  }, [status, mode]);
+
   // Auto-reconnect with existing userToken
   useEffect(() => {
     if (autoReconnectAttempted) return;
@@ -143,7 +150,7 @@ export function ConnectPage() {
       <div className="flex h-full flex-col items-center justify-center gap-4 p-4 bg-gradient-to-b from-primary/5 to-transparent">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm text-muted-foreground">
-          Reconnecting to your gateway...
+          Connecting to your gateway...
         </p>
         {error && (
           <p className="text-sm text-destructive">{error}</p>
