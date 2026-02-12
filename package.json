@@ -12,7 +12,7 @@
     "test:e2e": "pnpm --filter pwa-client test:e2e",
     "dev:sidecar": "pnpm --filter sidecar-proxy dev",
     "dev:worker": "pnpm --filter cf-worker-signaling dev",
-    "deploy:worker": "pnpm --filter cf-worker-signaling deploy",
+    "deploy:worker": "pnpm --filter cf-worker-signaling run deploy",
     "deploy:pages": "pnpm --filter pwa-client build && wrangler pages deploy packages/pwa-client/dist"
   },
   "devDependencies": {
