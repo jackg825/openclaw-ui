@@ -24,7 +24,7 @@ RUN pnpm --filter @openclaw/sidecar-proxy build
 FROM node:22-slim
 WORKDIR /app
 
-LABEL org.opencontainers.image.source="https://github.com/openclaw/openclaw-ui"
+LABEL org.opencontainers.image.source="https://github.com/jackg825/openclaw-ui"
 LABEL org.opencontainers.image.description="OpenClaw Sidecar Proxy — WebRTC-to-WebSocket bridge"
 
 # Copy workspace root for pnpm

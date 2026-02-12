@@ -24,7 +24,7 @@ warn() { echo -e "${YELLOW}[openclaw]${NC} $*"; }
 err()  { echo -e "${RED}[openclaw]${NC} $*" >&2; }
 
 INSTALL_DIR="${OPENCLAW_INSTALL_DIR:-$HOME/.openclaw-sidecar}"
-REPO_URL="https://github.com/openclaw/openclaw-ui.git"
+REPO_URL="https://github.com/jackg825/openclaw-ui.git"
 SIGNALING_URL="${SIGNALING_URL:-https://openclaw-signaling.jackg825.workers.dev}"
 GATEWAY_URL="${GATEWAY_URL:-ws://127.0.0.1:18789}"
 

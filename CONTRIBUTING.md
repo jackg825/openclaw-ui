@@ -123,4 +123,4 @@ This project follows the [Contributor Covenant v2.1](https://www.contributor-cov
 
 ## Questions?
 
-Open a [Discussion](https://github.com/openclaw/openclaw-ui/discussions) or join the community chat.
+Open a [Discussion](https://github.com/jackg825/openclaw-ui/discussions) or join the community chat.

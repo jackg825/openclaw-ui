@@ -52,7 +52,7 @@ Connect to any OpenClaw Gateway instance from a browser — no plugins, no exten
 
 ```bash
 # Clone and install
-git clone https://github.com/openclaw/openclaw-ui.git
+git clone https://github.com/jackg825/openclaw-ui.git
 cd openclaw-ui
 corepack enable
 pnpm install
