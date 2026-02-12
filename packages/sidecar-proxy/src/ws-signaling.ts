@@ -27,8 +27,10 @@ export class WsSidecarSignaling {
     }
     this.ws = new WebSocket(wsUrl);
 
+    console.debug(`[ws-signaling] Connecting to ${wsUrl}`);
     await new Promise<void>((resolve, reject) => {
       this.ws!.on('open', () => {
+        console.debug('[ws-signaling] WebSocket open, sending join', { room: this.roomId, peer: this.peerId });
         this.ws!.send(JSON.stringify({
           type: 'join',
           roomId: this.roomId,
@@ -43,12 +45,17 @@ export class WsSidecarSignaling {
     this.ws.on('message', (data) => {
       try {
         const msg: WsServerMessage = JSON.parse(data.toString());
+        console.debug('[ws-signaling] Received', { type: msg.type });
         for (const handler of this.handlers) {
           handler(msg);
         }
       } catch {
-        // Ignore malformed messages
+        console.debug('[ws-signaling] Malformed message, ignoring', { size: data.toString().length });
       }
+    });
+
+    this.ws.on('close', (code) => {
+      console.debug('[ws-signaling] WebSocket closed', { code });
     });
   }
 
@@ -61,6 +68,7 @@ export class WsSidecarSignaling {
   }
 
   async getTurnCredentials(): Promise<TurnCredentials> {
+    console.debug('[ws-signaling] Fetching TURN credentials');
     const res = await fetch(`${this.baseUrl}/turn-creds`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -89,7 +97,10 @@ export class WsSidecarSignaling {
 
   private send(data: Record<string, unknown>): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
+      console.debug('[ws-signaling] Sending', { type: data.type });
       this.ws.send(JSON.stringify(data));
+    } else {
+      console.debug('[ws-signaling] Send skipped, WS not open', { type: data.type, readyState: this.ws?.readyState });
     }
   }
 }

@@ -30,8 +30,10 @@ export class OpenClawProtocol extends EventTarget {
     const id = crypto.randomUUID();
     const frame: OCRequest = { type: 'req', id, method, params };
 
+    console.debug('[protocol] Request', { method, id: id.slice(0, 8) });
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        console.debug('[protocol] Request timeout', { method, id: id.slice(0, 8) });
         this.pendingRequests.delete(id);
         reject(new Error(`Request ${method} timed out`));
       }, REQUEST_TIMEOUT);
@@ -79,21 +81,27 @@ export class OpenClawProtocol extends EventTarget {
     try {
       frame = JSON.parse(raw) as OCFrame;
     } catch {
+      console.debug('[protocol] Frame parse error', { size: raw.length });
       return; // Ignore non-JSON messages
     }
 
     if (frame.type === 'res') {
       const pending = this.pendingRequests.get(frame.id);
       if (pending) {
+        console.debug('[protocol] Response received', { id: frame.id.slice(0, 8), ok: frame.ok });
         clearTimeout(pending.timeout);
         this.pendingRequests.delete(frame.id);
         if (frame.ok) {
           pending.resolve(frame.payload);
         } else {
+          console.debug('[protocol] Response error', { id: frame.id.slice(0, 8), error: frame.error });
           pending.reject(frame.error ?? new Error('Unknown error'));
         }
+      } else {
+        console.debug('[protocol] Orphan response (no pending request)', { id: frame.id.slice(0, 8) });
       }
     } else if (frame.type === 'event') {
+      console.debug('[protocol] Event received', { event: frame.event });
       this.dispatchEvent(new CustomEvent(frame.event, { detail: frame.payload }));
     }
   }

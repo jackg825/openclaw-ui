@@ -103,6 +103,7 @@ async function main(): Promise<void> {
     const creds = await signaling.getTurnCredentials();
     if (creds.iceServers) {
       turnServers = creds.iceServers;
+      console.debug('[sidecar] TURN servers received', { count: turnServers.length, urls: turnServers.flatMap(s => s.urls) });
     }
   } catch (err) {
     console.warn(`[sidecar] TURN not available: ${(err as Error).message}`);
@@ -120,6 +121,7 @@ async function main(): Promise<void> {
 
   // Send ICE candidates via signaling
   pc.onLocalCandidate((candidate, mid) => {
+    console.debug('[sidecar] Local ICE candidate', { mid, candidate: candidate.slice(0, 50) + '...' });
     signaling.sendIceCandidate({ candidate, sdpMid: mid }).catch(() => {});
   });
 
@@ -133,6 +135,8 @@ async function main(): Promise<void> {
     bridge.attach(dc);
 
     dc.onMessage((raw) => {
+      const size = typeof raw === 'string' ? raw.length : (raw as Buffer).length;
+      console.debug('[sidecar] DC message received', { size });
       const consumed = bridge.handleDataChannelMessage(raw);
       if (!consumed && needsRegistrationListener) {
         // Internal message not forwarded to gateway — check for device registration
@@ -163,6 +167,7 @@ async function main(): Promise<void> {
 
   // Listen for signaling messages (offers and ICE from browser)
   signaling.onMessage((msg: WsServerMessage) => {
+    console.debug('[sidecar] Signaling message routed', { type: msg.type });
     switch (msg.type) {
       case 'offer':
         console.log('[sidecar] Received offer');

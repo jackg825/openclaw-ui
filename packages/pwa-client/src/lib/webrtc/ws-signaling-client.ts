@@ -25,13 +25,18 @@ export class WsSignalingClient {
     if (this.deviceToken) {
       wsUrl += `&token=${encodeURIComponent(this.deviceToken)}`;
     }
+    console.debug(`[signaling] Connecting to ${wsUrl}`);
     this.ws = new WebSocket(wsUrl);
 
     await new Promise<void>((resolve, reject) => {
-      this.ws!.onopen = () => resolve();
+      this.ws!.onopen = () => {
+        console.debug('[signaling] WebSocket open');
+        resolve();
+      };
       this.ws!.onerror = () => reject(new Error('WebSocket connection failed'));
     });
 
+    console.debug('[signaling] Sending join', { room: this.roomId, peer: this.peerId });
     this.ws.send(JSON.stringify({
       type: 'join',
       roomId: this.roomId,
@@ -42,28 +47,33 @@ export class WsSignalingClient {
     this.ws.onmessage = (event) => {
       try {
         const msg: WsServerMessage = JSON.parse(event.data);
+        console.debug('[signaling] Received', { type: msg.type });
         for (const handler of this.handlers) {
           handler(msg);
         }
       } catch {
-        // Ignore malformed messages
+        console.debug('[signaling] Malformed message, ignoring');
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
+      console.debug('[signaling] WebSocket closed', { code: event.code });
       for (const handler of this.disconnectHandlers) handler();
     };
 
     this.ws.onerror = () => {
+      console.debug('[signaling] WebSocket error');
       for (const handler of this.disconnectHandlers) handler();
     };
   }
 
   async sendOffer(sdp: string): Promise<void> {
+    console.debug('[signaling] Sending offer', { sdpLength: sdp.length });
     this.send({ type: 'offer', sdp });
   }
 
   async sendAnswer(sdp: string): Promise<void> {
+    console.debug('[signaling] Sending answer', { sdpLength: sdp.length });
     this.send({ type: 'answer', sdp });
   }
 
@@ -72,6 +82,7 @@ export class WsSignalingClient {
   }
 
   async getTurnCredentials(): Promise<TurnCredentials> {
+    console.debug('[signaling] Fetching TURN credentials');
     const res = await fetch(`${this.baseUrl}/turn-creds`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -97,6 +108,7 @@ export class WsSignalingClient {
   }
 
   close(): void {
+    console.debug('[signaling] Closing');
     this.ws?.close();
     this.ws = null;
     this.handlers = [];
@@ -106,6 +118,8 @@ export class WsSignalingClient {
   private send(data: Record<string, unknown>): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
+    } else {
+      console.debug('[signaling] Send skipped, WS not open', { type: data.type, readyState: this.ws?.readyState });
     }
   }
 }

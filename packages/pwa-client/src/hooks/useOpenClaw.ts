@@ -27,8 +27,10 @@ export function useOpenClaw(): OpenClawConnection {
   const connect = useCallback(
     async (signalingUrl: string, roomId: string) => {
       try {
+        console.debug('[hook:openclaw] Connecting', { signalingUrl, roomId });
         // Clean up previous connection
         if (managerRef.current) {
+          console.debug('[hook:openclaw] Disconnecting previous connection');
           managerRef.current.disconnect();
         }
 
@@ -38,10 +40,12 @@ export function useOpenClaw(): OpenClawConnection {
         managerRef.current = manager;
 
         manager.addEventListener('connected', () => {
+          console.debug('[hook:openclaw] Connected');
           setStatus('connected');
 
           // Send pending device registration if any
           if (pendingRegistration.current) {
+            console.debug('[hook:openclaw] Sending queued device registration');
             const { deviceToken, stableRoomId } = pendingRegistration.current;
             manager.send(JSON.stringify({
               type: 'device-registration',
@@ -53,23 +57,30 @@ export function useOpenClaw(): OpenClawConnection {
         });
 
         manager.addEventListener('reconnecting', () => {
+          console.debug('[hook:openclaw] Reconnecting');
           setStatus('reconnecting');
         });
 
         manager.addEventListener('disconnected', () => {
+          console.debug('[hook:openclaw] Disconnected');
           setStatus('disconnected');
         });
 
         manager.addEventListener('error', (e) => {
+          console.debug('[hook:openclaw] Error', { detail: (e as CustomEvent).detail });
           setError((e as CustomEvent).detail);
         });
 
         // Handle incoming messages
         manager.onMessage((msg) => {
+          console.debug('[hook:openclaw] Message received', { size: msg.length });
           // Silently consume device-registration-ack
           try {
             const parsed = JSON.parse(msg);
-            if (parsed.type === 'device-registration-ack') return;
+            if (parsed.type === 'device-registration-ack') {
+              console.debug('[hook:openclaw] Device registration acknowledged');
+              return;
+            }
           } catch {
             // Not JSON — fall through to protocol handling
           }
@@ -81,6 +92,7 @@ export function useOpenClaw(): OpenClawConnection {
         setStatus('connecting');
         await manager.connect();
       } catch (err) {
+        console.debug('[hook:openclaw] Connection error', { error: err instanceof Error ? err.message : err });
         setError(err instanceof Error ? err.message : 'Connection failed');
       }
     },
@@ -88,6 +100,7 @@ export function useOpenClaw(): OpenClawConnection {
   );
 
   const disconnect = useCallback(() => {
+    console.debug('[hook:openclaw] Disconnect requested');
     managerRef.current?.disconnect();
     managerRef.current = null;
     pendingRegistration.current = null;

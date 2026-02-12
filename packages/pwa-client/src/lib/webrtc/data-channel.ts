@@ -13,20 +13,24 @@ export class DataChannelWrapper extends EventTarget {
     this.dc.binaryType = 'arraybuffer';
 
     this.dc.onopen = () => {
+      console.debug('[datachannel] Opened', { label: dc.label });
       this.dispatchEvent(new Event('open'));
       this.drainQueue();
     };
 
     this.dc.onclose = () => {
+      console.debug('[datachannel] Closed', { label: dc.label });
       this.dispatchEvent(new Event('close'));
     };
 
     this.dc.onerror = (event) => {
+      console.debug('[datachannel] Error', { label: dc.label });
       this.dispatchEvent(new CustomEvent('error', { detail: event }));
     };
 
     this.dc.onmessage = (event: MessageEvent) => {
       const data = typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data);
+      console.debug('[datachannel] Message received', { size: data.length });
       this.messageHandler?.(data);
       this.dispatchEvent(new CustomEvent('message', { detail: data }));
     };
@@ -51,6 +55,7 @@ export class DataChannelWrapper extends EventTarget {
   /** Send a string message. Queues if buffer is full or channel not open. */
   send(data: string): void {
     if (this.dc.readyState !== 'open' || this.dc.bufferedAmount > BUFFER_THRESHOLD) {
+      console.debug('[datachannel] Queued', { size: data.length, readyState: this.dc.readyState, buffered: this.dc.bufferedAmount });
       this.queue.push(data);
       if (this.dc.readyState === 'open' && !this.draining) {
         this.drainQueue();
@@ -68,6 +73,7 @@ export class DataChannelWrapper extends EventTarget {
   private drainQueue(): void {
     if (this.draining || this.dc.readyState !== 'open') return;
     this.draining = true;
+    console.debug('[datachannel] Draining queue', { queued: this.queue.length });
 
     const drain = () => {
       while (this.queue.length > 0 && this.dc.bufferedAmount <= BUFFER_THRESHOLD) {

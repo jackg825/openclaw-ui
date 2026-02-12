@@ -27,6 +27,7 @@ export class Bridge {
     // WebSocket -> DataChannel (chunk if large, forward)
     this.ws.on('message', (data: WebSocket.RawData) => {
       const str = data.toString('utf-8');
+      console.debug('[bridge] WS→DC relay', { size: str.length });
       const chunks = this.chunker.split(str);
       for (const chunk of chunks) {
         dc.sendMessage(chunk);
@@ -69,6 +70,7 @@ export class Bridge {
     try {
       const parsed = JSON.parse(assembled);
       if (parsed.type && INTERNAL_TYPES.has(parsed.type)) {
+        console.debug('[bridge] Internal message intercepted', { type: parsed.type });
         return false;
       }
     } catch {
@@ -76,7 +78,10 @@ export class Bridge {
     }
 
     if (this.ws?.readyState === WebSocket.OPEN) {
+      console.debug('[bridge] DC→WS relay', { size: assembled.length });
       this.ws.send(assembled);
+    } else {
+      console.debug('[bridge] DC→WS dropped, gateway not connected', { size: assembled.length });
     }
     return true;
   }

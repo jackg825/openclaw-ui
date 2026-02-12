@@ -11,6 +11,7 @@ export class MessageChunker {
 
     const id = crypto.randomUUID();
     const total = Math.ceil(message.length / MAX_CHUNK_SIZE);
+    console.debug('[chunker] Splitting message', { size: message.length, chunks: total, id: id.slice(0, 8) });
     const chunks: string[] = [];
 
     for (let i = 0; i < message.length; i += MAX_CHUNK_SIZE) {
@@ -48,9 +49,12 @@ export class MessageChunker {
     entry.chunks[seq] = data;
 
     const received = entry.chunks.filter(Boolean).length;
+    console.debug('[chunker] Chunk received', { id: id.slice(0, 8), seq, received, total: entry.total });
     if (received === entry.total) {
       this.pending.delete(id);
-      return entry.chunks.join('');
+      const assembled = entry.chunks.join('');
+      console.debug('[chunker] Assembly complete', { id: id.slice(0, 8), size: assembled.length });
+      return assembled;
     }
 
     return null;

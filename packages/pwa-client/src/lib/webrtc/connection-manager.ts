@@ -47,14 +47,16 @@ export class WebRTCConnectionManager extends EventTarget {
 
     try {
       // 1. Join the signaling room via WebSocket
+      console.debug('[webrtc] Joining signaling room', { room: this.roomId });
       await this.signaling.join();
 
       // 2. Get TURN credentials
       let turnCreds: TurnCredentials | null = null;
       try {
         turnCreds = await this.signaling.getTurnCredentials();
+        console.debug('[webrtc] TURN credentials received', { servers: turnCreds.iceServers?.length ?? 0 });
       } catch {
-        // TURN not available — proceed with STUN only
+        console.debug('[webrtc] TURN not available, using STUN only');
       }
 
       // 3. Create RTCPeerConnection
@@ -67,11 +69,13 @@ export class WebRTCConnectionManager extends EventTarget {
       this.pc = new RTCPeerConnection({ iceServers });
 
       // 4. Create DataChannel
+      console.debug('[webrtc] Creating DataChannel "openclaw"');
       const rawDc = this.pc.createDataChannel('openclaw', { ordered: true });
       this.dc = new DataChannelWrapper(rawDc);
       this.dc.onMessage((msg) => this.handleRawMessage(msg));
 
       this.dc.addEventListener('open', () => {
+        console.debug('[webrtc] DataChannel opened');
         this.clearHandshakeTimer();
         this.setState('connected');
         this.reconnection.reset();
@@ -80,12 +84,14 @@ export class WebRTCConnectionManager extends EventTarget {
       });
 
       this.dc.addEventListener('close', () => {
+        console.debug('[webrtc] DataChannel closed');
         this.handleDisconnect();
       });
 
       // 5. ICE candidate gathering
       this.pc.onicecandidate = (event) => {
         if (event.candidate) {
+          console.debug('[webrtc] Local ICE candidate', { type: event.candidate.type, protocol: event.candidate.protocol });
           this.signaling.sendIceCandidate(event.candidate.toJSON()).catch(() => {});
         }
       };
@@ -99,6 +105,7 @@ export class WebRTCConnectionManager extends EventTarget {
       // 6. Create and send offer
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
+      console.debug('[webrtc] Offer created and sent', { sdpLength: offer.sdp?.length });
       await this.signaling.sendOffer(offer.sdp!);
 
       // 7. Listen for answer and ICE candidates
@@ -129,6 +136,7 @@ export class WebRTCConnectionManager extends EventTarget {
     if (!this.dc || this.dc.readyState !== 'open') {
       throw new Error('DataChannel is not open');
     }
+    console.debug('[webrtc] Sending message', { size: message.length });
     const chunks = this.chunker.split(message);
     for (const chunk of chunks) {
       this.dc.send(chunk);
@@ -157,7 +165,9 @@ export class WebRTCConnectionManager extends EventTarget {
   }
 
   private setState(state: ConnectionState): void {
+    const from = this.state;
     this.state = state;
+    console.debug('[webrtc] State transition', { from, to: state });
   }
 
   private clearHandshakeTimer(): void {
@@ -170,6 +180,7 @@ export class WebRTCConnectionManager extends EventTarget {
   private handleRawMessage(raw: string): void {
     const assembled = this.chunker.receive(raw);
     if (assembled !== null) {
+      console.debug('[webrtc] Message received', { size: assembled.length });
       for (const handler of this.messageHandlers) {
         handler(assembled);
       }
@@ -178,10 +189,12 @@ export class WebRTCConnectionManager extends EventTarget {
   }
 
   private async handleSignalingMessage(msg: WsServerMessage): Promise<void> {
+    console.debug('[webrtc] Signaling message', { type: msg.type });
     switch (msg.type) {
       case 'answer':
         if (this.pc) {
           try {
+            console.debug('[webrtc] Setting remote answer', { sdpLength: msg.sdp.length });
             await this.pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
           } catch {
             this.handleDisconnect();
@@ -198,6 +211,7 @@ export class WebRTCConnectionManager extends EventTarget {
 
   private handleDisconnect(): void {
     if (this.state === 'reconnecting' || this.state === 'idle') return;
+    console.debug('[webrtc] Disconnect detected, scheduling reconnection', { from: this.state });
 
     this.setState('reconnecting');
     this.dispatchEvent(new Event('reconnecting'));

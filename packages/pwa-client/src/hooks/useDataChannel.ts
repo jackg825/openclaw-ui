@@ -16,6 +16,7 @@ export function useDataChannel(
   const [lastMessage, setLastMessage] = useState<string | null>(null);
 
   const send = useCallback((data: string) => {
+    console.debug('[hook:datachannel] Send', { size: data.length, readyState: dcRef.current?.readyState });
     if (dcRef.current?.readyState === 'open') {
       dcRef.current.send(data);
     }

@@ -19,10 +19,16 @@ export interface DeviceConfig {
 
 export function loadDeviceConfig(configPath: string): DeviceConfig | null {
   try {
-    if (!existsSync(configPath)) return null;
+    if (!existsSync(configPath)) {
+      console.debug('[config] No device config at', configPath);
+      return null;
+    }
     const data = readFileSync(configPath, 'utf-8');
-    return JSON.parse(data) as DeviceConfig;
+    const config = JSON.parse(data) as DeviceConfig;
+    console.debug('[config] Loaded device config', { token: config.deviceToken.slice(0, 8) + '...', registeredAt: config.registeredAt });
+    return config;
   } catch {
+    console.debug('[config] Failed to parse device config at', configPath);
     return null;
   }
 }
@@ -33,6 +39,7 @@ export function saveDeviceConfig(configPath: string, config: DeviceConfig): void
     mkdirSync(dir, { recursive: true });
   }
   writeFileSync(configPath, JSON.stringify(config, null, 2));
+  console.debug('[config] Saved device config to', configPath);
 }
 
 export function parseConfig(args: string[]): SidecarConfig {
@@ -63,6 +70,12 @@ export function parseConfig(args: string[]): SidecarConfig {
         break;
     }
   }
+
+  console.debug('[config] Parsed config', {
+    gatewayUrl: config.gatewayUrl,
+    signalingUrl: config.signalingUrl,
+    roomId: config.roomId || '(none)',
+  });
 
   return config;
 }

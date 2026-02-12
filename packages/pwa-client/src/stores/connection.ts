@@ -46,14 +46,28 @@ const initialState = {
 export const useConnectionStore = create<ConnectionState>((set) => ({
   ...initialState,
 
-  setStatus: (status) =>
-    set({ status, error: status === 'failed' ? undefined : null }),
-  setDeviceToken: (deviceToken) => set({ deviceToken }),
+  setStatus: (status) => {
+    console.debug('[connection-store] Status change', { to: status });
+    set({ status, error: status === 'failed' ? undefined : null });
+  },
+  setDeviceToken: (deviceToken) => {
+    console.debug('[connection-store] Device token set', { token: deviceToken.slice(0, 8) + '...' });
+    set({ deviceToken });
+  },
   setGatewayInfo: (gatewayInfo) => set({ gatewayInfo }),
-  setError: (error) => set({ error, status: 'failed' }),
+  setError: (error) => {
+    console.debug('[connection-store] Error', { error });
+    set({ error, status: 'failed' });
+  },
   setLatency: (latency) => set({ latency }),
-  setTransport: (transport) => set({ transport }),
+  setTransport: (transport) => {
+    console.debug('[connection-store] Transport', { transport });
+    set({ transport });
+  },
   setPairingCode: (pairingCode) => set({ pairingCode }),
   setPairingExpiresAt: (pairingExpiresAt) => set({ pairingExpiresAt }),
-  reset: () => set(initialState),
+  reset: () => {
+    console.debug('[connection-store] Reset');
+    set(initialState);
+  },
 }));
