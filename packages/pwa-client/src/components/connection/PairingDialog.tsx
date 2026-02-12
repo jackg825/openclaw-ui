@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback, Fragment } from 'react';
 import { Plug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,16 +19,141 @@ interface PairingDialogProps {
 }
 
 /** Pairing code format: XXXX-XXXX (alphanumeric, uppercase) */
-const PAIRING_CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+const CODE_LENGTH = 8;
 
-function formatPairingInput(raw: string): string {
-  // Strip non-alphanumeric, uppercase, auto-insert hyphen after 4 chars
-  const clean = raw.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);
-  if (clean.length > 4) {
-    return `${clean.slice(0, 4)}-${clean.slice(4)}`;
-  }
-  return clean;
+function formatCode(chars: string[]): string {
+  const joined = chars.join('');
+  if (joined.length > 4) return `${joined.slice(0, 4)}-${joined.slice(4)}`;
+  return joined;
 }
+
+function isComplete(chars: string[]): boolean {
+  return chars.every((c) => c !== '') && chars.length === CODE_LENGTH;
+}
+
+// --- Segmented OTP-style pairing code input ---
+
+function PairingCodeInput({
+  value,
+  onChange,
+  disabled,
+  onComplete,
+}: {
+  value: string;
+  onChange: (formatted: string) => void;
+  disabled?: boolean;
+  onComplete?: () => void;
+}) {
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  // Parse "XXXX-XXXX" or raw string into 8-char array
+  const chars = value
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toUpperCase()
+    .split('')
+    .concat(Array(CODE_LENGTH).fill(''))
+    .slice(0, CODE_LENGTH);
+
+  const emit = useCallback(
+    (next: string[]) => {
+      onChange(formatCode(next));
+      if (isComplete(next)) onComplete?.();
+    },
+    [onChange, onComplete],
+  );
+
+  const handleChange = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+    if (!raw) {
+      const next = [...chars];
+      next[index] = '';
+      emit(next);
+      return;
+    }
+    // Take last char (handles overwrite when field is selected)
+    const char = raw.slice(-1);
+    const next = [...chars];
+    next[index] = char;
+    emit(next);
+
+    // Auto-advance
+    if (index < CODE_LENGTH - 1) {
+      inputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace') {
+      if (!chars[index] && index > 0) {
+        // Empty box — move back and clear previous
+        const next = [...chars];
+        next[index - 1] = '';
+        emit(next);
+        inputRefs.current[index - 1]?.focus();
+        e.preventDefault();
+      }
+    } else if (e.key === 'ArrowLeft' && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+      e.preventDefault();
+    } else if (e.key === 'ArrowRight' && index < CODE_LENGTH - 1) {
+      inputRefs.current[index + 1]?.focus();
+      e.preventDefault();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const pasted = e.clipboardData
+      .getData('text')
+      .replace(/[^A-Za-z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, CODE_LENGTH);
+    const next = pasted
+      .split('')
+      .concat(Array(CODE_LENGTH).fill(''))
+      .slice(0, CODE_LENGTH);
+    emit(next);
+    // Focus last filled box or the next empty one
+    const focusIdx = Math.min(pasted.length, CODE_LENGTH - 1);
+    inputRefs.current[focusIdx]?.focus();
+  };
+
+  return (
+    <div className="flex items-center justify-center gap-1.5" onPaste={handlePaste}>
+      {chars.map((char, i) => (
+        <Fragment key={i}>
+          {i === 4 && (
+            <span className="text-xl font-bold text-muted-foreground select-none mx-0.5">
+              –
+            </span>
+          )}
+          <input
+            ref={(el) => {
+              inputRefs.current[i] = el;
+            }}
+            type="text"
+            inputMode="text"
+            maxLength={2}
+            value={char}
+            onChange={(e) => handleChange(i, e)}
+            onKeyDown={(e) => handleKeyDown(i, e)}
+            onFocus={(e) => e.target.select()}
+            disabled={disabled}
+            aria-label={`Pairing code digit ${i + 1}`}
+            autoComplete="off"
+            spellCheck={false}
+            className="w-10 h-12 text-center font-mono text-lg uppercase rounded-md border border-input bg-background
+              focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent
+              disabled:opacity-50 disabled:cursor-not-allowed
+              transition-shadow"
+          />
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+// --- Main dialog ---
 
 export function PairingDialog({ onConnect, resolving }: PairingDialogProps) {
   const defaultSignalingUrl = useSettingsStore((s) => s.defaultSignalingUrl);
@@ -43,11 +168,17 @@ export function PairingDialog({ onConnect, resolving }: PairingDialogProps) {
     status === 'connecting' ||
     status === 'authenticating';
 
-  const isPairingCode = PAIRING_CODE_RE.test(code);
+  const codeComplete = isComplete(
+    code
+      .replace(/[^A-Za-z0-9]/g, '')
+      .split('')
+      .concat(Array(CODE_LENGTH).fill(''))
+      .slice(0, CODE_LENGTH),
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!signalingUrl.trim() || !code.trim()) return;
+    if (!signalingUrl.trim() || !codeComplete) return;
     onConnect(signalingUrl.trim(), code.trim());
   };
 
@@ -78,26 +209,16 @@ export function PairingDialog({ onConnect, resolving }: PairingDialogProps) {
             />
           </div>
           <div className="space-y-2">
-            <label htmlFor="pairing-code" className="text-sm font-medium">
-              Pairing Code
-            </label>
-            <Input
-              id="pairing-code"
-              placeholder="XXXX-XXXX"
+            <label className="text-sm font-medium">Pairing Code</label>
+            <PairingCodeInput
               value={code}
-              onChange={(e) => setCode(formatPairingInput(e.target.value))}
+              onChange={setCode}
               disabled={isConnecting}
-              className="font-mono text-lg tracking-widest"
-              maxLength={9}
-              autoComplete="off"
-              spellCheck={false}
             />
-            <p className="text-xs text-muted-foreground">
-              {isPairingCode
-                ? 'Pairing code detected'
-                : code
-                  ? 'Enter the 8-character code (e.g. GH9H-FT8Q)'
-                  : 'Shown in your sidecar terminal after startup'}
+            <p className="text-xs text-muted-foreground text-center">
+              {codeComplete
+                ? 'Ready to connect'
+                : 'Shown in your sidecar terminal after startup'}
             </p>
           </div>
           {error && (
@@ -116,7 +237,7 @@ export function PairingDialog({ onConnect, resolving }: PairingDialogProps) {
           <Button
             type="submit"
             className="w-full"
-            disabled={isConnecting || !signalingUrl.trim() || !code.trim()}
+            disabled={isConnecting || !signalingUrl.trim() || !codeComplete}
           >
             {isConnecting ? 'Connecting...' : 'Connect'}
           </Button>
