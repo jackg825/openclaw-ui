@@ -1,0 +1,12 @@
+import { resolveBindings } from '@/lib/a2ui/adapter';
+import { cn } from '@/lib/utils';
+import type { WidgetProps } from '../registry';
+
+export function A2UIColumn({ component, dataModel, children }: WidgetProps) {
+  const props = resolveBindings(component, dataModel);
+  const className = props.className as string | undefined;
+
+  return (
+    <div className={cn('flex flex-col gap-2', className)}>{children}</div>
+  );
+}

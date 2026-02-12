@@ -1,0 +1,29 @@
+{
+  "name": "openclaw-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter pwa-client dev",
+    "build": "pnpm --filter pwa-client build",
+    "build:all": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter pwa-client test:e2e",
+    "dev:sidecar": "pnpm --filter sidecar-proxy dev",
+    "dev:worker": "pnpm --filter cf-worker-signaling dev",
+    "deploy:worker": "pnpm --filter cf-worker-signaling deploy",
+    "deploy:pages": "pnpm --filter pwa-client build && wrangler pages deploy packages/pwa-client/dist"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.55.0"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

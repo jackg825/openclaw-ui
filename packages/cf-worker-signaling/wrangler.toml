@@ -1,0 +1,18 @@
+name = "openclaw-signaling"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[[r2_buckets]]
+binding = "SIGNALING_BUCKET"
+bucket_name = "openclaw-signaling"
+
+[[durable_objects.bindings]]
+name = "SIGNALING_ROOM"
+class_name = "SignalingRoom"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["SignalingRoom"]
+
+[vars]
+# TURN_KEY_ID and TURN_API_TOKEN should be set as secrets via wrangler secret put
