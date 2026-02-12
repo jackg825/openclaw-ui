@@ -4,7 +4,7 @@ compatibility_date = "2025-01-01"
 
 [[r2_buckets]]
 binding = "SIGNALING_BUCKET"
-bucket_name = "openclaw-signaling"
+bucket_name = "openclaw-ui-storage"
 
 [[durable_objects.bindings]]
 name = "SIGNALING_ROOM"
