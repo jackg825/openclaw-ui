@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MessageSquare, User } from 'lucide-react';
 import type { Message } from '@/stores/chat';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/utils/format';
@@ -14,15 +15,20 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <div
       className={cn(
-        'flex w-full',
+        'flex w-full gap-3 animate-slide-up',
         isUser ? 'justify-end' : 'justify-start',
       )}
     >
+      {!isUser && (
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 mt-1">
+          <MessageSquare className="h-3.5 w-3.5 text-primary" />
+        </div>
+      )}
       <div
         className={cn(
-          'max-w-[80%] rounded-lg px-4 py-2',
+          'max-w-[85%] rounded-2xl px-4 py-2',
           isUser
-            ? 'bg-primary text-primary-foreground'
+            ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20'
             : 'bg-card border',
         )}
       >
@@ -44,6 +50,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           {formatDate(message.timestamp)}
         </p>
       </div>
+      {isUser && (
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary mt-1">
+          <User className="h-3.5 w-3.5 text-secondary-foreground" />
+        </div>
+      )}
     </div>
   );
 }

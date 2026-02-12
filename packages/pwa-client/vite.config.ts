@@ -13,8 +13,8 @@ export default defineConfig({
         name: 'OpenClaw Web Client',
         short_name: 'OpenClaw',
         description: 'Rich WebRTC client for OpenClaw AI agent gateway',
-        theme_color: '#0f172a',
-        background_color: '#0f172a',
+        theme_color: '#0d1117',
+        background_color: '#0d1117',
         display: 'standalone',
         start_url: '/',
         icons: [

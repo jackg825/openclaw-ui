@@ -9,6 +9,7 @@ import {
   CardContent,
 } from '@/components/ui/card';
 import { useStoreStore } from '@/stores/store';
+import { cn } from '@/lib/utils';
 
 const PLACEHOLDER_CATEGORIES = [
   'All',
@@ -38,7 +39,7 @@ export function StorePage() {
           placeholder="Search skills..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-9"
+          className="pl-9 bg-card"
         />
       </div>
 
@@ -52,7 +53,11 @@ export function StorePage() {
                 ? 'default'
                 : 'outline'
             }
-            className="cursor-pointer"
+            className={cn(
+              'cursor-pointer',
+              ((cat === 'All' && !selectedCategory) || selectedCategory === cat)
+                && 'bg-primary/15 text-primary border-primary/30 hover:bg-primary/20',
+            )}
             onClick={() =>
               setSelectedCategory(cat === 'All' ? null : cat)
             }
@@ -64,7 +69,7 @@ export function StorePage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {[1, 2, 3, 4, 5, 6].map((i) => (
-          <Card key={i} className="cursor-pointer hover:border-primary/50 transition-colors">
+          <Card key={i} className="cursor-pointer card-interactive">
             <CardHeader>
               <CardTitle className="text-base">Skill Placeholder {i}</CardTitle>
               <CardDescription>

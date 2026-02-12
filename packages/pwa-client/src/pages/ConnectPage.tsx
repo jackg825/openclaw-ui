@@ -110,7 +110,7 @@ export function ConnectPage() {
 
   if (mode === 'loading') {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-4">
+      <div className="flex h-full flex-col items-center justify-center gap-4 p-4 bg-gradient-to-b from-primary/5 to-transparent">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm text-muted-foreground">
           Reconnecting to your gateway...

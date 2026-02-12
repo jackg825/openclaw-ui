@@ -26,7 +26,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6 p-6 max-w-2xl">
-      <div>
+      <div className="border-b pb-4 mb-2">
         <h1 className="text-2xl font-bold">Settings</h1>
         <p className="text-muted-foreground">
           Configure your OpenClaw client preferences

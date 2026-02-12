@@ -13,7 +13,7 @@ import { useCluster } from '@/hooks/useCluster';
 import { cn } from '@/lib/utils';
 
 const STATUS_COLORS: Record<string, string> = {
-  online: 'bg-green-500',
+  online: 'bg-green-500 ring-2 ring-green-500/20',
   degraded: 'bg-yellow-500',
   offline: 'bg-red-500',
   connecting: 'bg-blue-500 animate-pulse',
@@ -31,7 +31,7 @@ export function ClusterPage() {
             Manage your OpenClaw gateway nodes
           </p>
         </div>
-        <Button>
+        <Button variant="outline" className="border-dashed">
           <Plus className="mr-2 h-4 w-4" />
           Add Node
         </Button>
@@ -50,7 +50,7 @@ export function ClusterPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {nodes.map((node) => (
             <Link key={node.id} to={`/cluster/${node.id}`}>
-              <Card className="cursor-pointer hover:border-primary/50 transition-colors">
+              <Card className="cursor-pointer card-interactive">
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base">{node.name}</CardTitle>

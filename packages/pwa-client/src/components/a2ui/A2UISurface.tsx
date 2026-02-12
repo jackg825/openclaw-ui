@@ -49,7 +49,7 @@ export function A2UISurface({ surfaceId }: A2UISurfaceProps) {
   if (!surface || !surface.rootId) return null;
 
   return (
-    <div data-surface-id={surfaceId}>
+    <div data-surface-id={surfaceId} className="my-2 rounded-lg border bg-card/50 p-3 shadow-sm">
       <RenderComponent
         componentId={surface.rootId}
         surface={surface}

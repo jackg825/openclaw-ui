@@ -37,7 +37,7 @@ export function StoreDetailPage() {
               <TabsTrigger value="permissions">Permissions</TabsTrigger>
             </TabsList>
             <TabsContent value="overview" className="space-y-4">
-              <Card>
+              <Card className="card-interactive">
                 <CardContent className="pt-6">
                   <p className="text-muted-foreground">
                     Skill description and documentation will be loaded from ClawHub.

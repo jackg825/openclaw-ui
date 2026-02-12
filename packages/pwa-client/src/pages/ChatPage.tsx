@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom';
-import { Plug } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { ChatView } from '@/components/chat/ChatView';
-import { Button } from '@/components/ui/button';
 import { useConnectionStore } from '@/stores/connection';
 import { useOpenClaw } from '@/hooks/useOpenClaw';
 
@@ -12,14 +11,17 @@ export function ChatPage() {
   return (
     <div className="flex h-full flex-col">
       {status === 'disconnected' && (
-        <div className="flex items-center gap-3 border-b bg-muted/50 px-4 py-2">
-          <Plug className="h-4 w-4 text-muted-foreground" />
+        <div className="flex items-center gap-3 border-b border-yellow-500/20 bg-yellow-500/5 px-4 py-2 animate-fade-in">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-500" />
           <span className="text-sm text-muted-foreground">
             Not connected to a gateway.
           </span>
-          <Button variant="link" size="sm" className="h-auto p-0" asChild>
-            <Link to="/connect">Connect now</Link>
-          </Button>
+          <Link
+            to="/connect"
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Connect now
+          </Link>
         </div>
       )}
       <div className="flex-1">

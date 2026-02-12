@@ -111,12 +111,12 @@ function ResourceBar({ label, value }: { label: string; value: number }) {
       <div className="h-2 rounded-full bg-muted">
         <div
           className={cn(
-            'h-full rounded-full transition-all',
+            'h-full rounded-full transition-all duration-500',
             value > 80
-              ? 'bg-red-500'
+              ? 'bg-gradient-to-r from-red-600 to-red-400'
               : value > 60
-                ? 'bg-yellow-500'
-                : 'bg-green-500',
+                ? 'bg-gradient-to-r from-yellow-600 to-yellow-400'
+                : 'bg-gradient-to-r from-green-600 to-green-400',
           )}
           style={{ width: `${Math.min(value, 100)}%` }}
         />
