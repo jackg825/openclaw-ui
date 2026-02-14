@@ -21,6 +21,14 @@ interface SettingsState {
   setVoiceEnabled: (enabled: boolean) => void;
   setVoiceProvider: (provider: 'web-speech' | 'deepgram') => void;
   setDeepgramApiKey: (key: string | null) => void;
+  mergeFromServer: (serverSettings: Partial<{
+    theme: Theme;
+    defaultSignalingUrl: string;
+    defaultRoomId: string;
+    voiceEnabled: boolean;
+    voiceProvider: 'web-speech' | 'deepgram';
+    deepgramApiKey: string | null;
+  }>) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -43,6 +51,11 @@ export const useSettingsStore = create<SettingsState>()(
       setVoiceEnabled: (voiceEnabled) => set({ voiceEnabled }),
       setVoiceProvider: (voiceProvider) => set({ voiceProvider }),
       setDeepgramApiKey: (deepgramApiKey) => set({ deepgramApiKey }),
+      mergeFromServer: (serverSettings) =>
+        set((state) => ({
+          ...state,
+          ...serverSettings,
+        })),
     }),
     {
       name: 'openclaw-settings',
