@@ -16,7 +16,7 @@ export function useCluster(): UseClusterReturn {
 
   const addNode = useCallback(
     async (config: NodeConfig) => {
-      // Will create a new WebRTC connection to the node via NodeManager
+      // Will create a new WS relay connection to the node via NodeManager
       // and add it to the cluster store once connected.
       const node: ClusterNode = {
         id: crypto.randomUUID(),
@@ -43,7 +43,7 @@ export function useCluster(): UseClusterReturn {
 
   const removeNode = useCallback(
     async (nodeId: string) => {
-      // Will disconnect the WebRTC connection via NodeManager
+      // Will disconnect the WS relay connection via NodeManager
       store.removeNode(nodeId);
     },
     [store],

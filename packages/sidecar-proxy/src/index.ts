@@ -1,5 +1,4 @@
-import { PeerConnection } from 'node-datachannel';
-import type { WsServerMessage, TurnCredentials } from '@openclaw/shared-types';
+import type { WsServerMessage } from '@openclaw/shared-types';
 import { parseConfig, loadDeviceConfig, saveDeviceConfig, type DeviceConfig } from './config.js';
 import { WsSidecarSignaling } from './ws-signaling.js';
 import { Bridge } from './bridge.js';
@@ -99,100 +98,48 @@ async function main(): Promise<void> {
 
   console.log(`[sidecar] Room:      ${config.roomId}`);
 
-  // ── Signaling + WebRTC setup ──
+  // ── WebSocket relay setup ──
   const signaling = new WsSidecarSignaling(config.signalingUrl, config.roomId, config.peerId, existingDevice?.deviceToken);
   await signaling.join();
-  console.log('[sidecar] Connected via WebSocket signaling');
+  console.log('[sidecar] Connected via WebSocket relay');
 
   const bridge = new Bridge(config.gatewayUrl);
+  bridge.attach(signaling);
 
-  // Get TURN credentials
-  let turnServers: TurnCredentials['iceServers'] = [];
-  try {
-    const creds = await signaling.getTurnCredentials();
-    if (creds.iceServers) {
-      turnServers = creds.iceServers;
-      console.debug('[sidecar] TURN servers received', { count: turnServers.length, urls: turnServers.flatMap(s => s.urls) });
-    }
-  } catch (err) {
-    console.warn(`[sidecar] TURN not available: ${(err as Error).message}`);
-  }
-
-  // Create PeerConnection (answering peer)
-  const turnUrls = turnServers.flatMap((s) => s.urls);
-  const pc = new PeerConnection('sidecar', {
-    iceServers: [
-      'stun:stun.cloudflare.com:3478',
-      'stun:stun.l.google.com:19302',
-      ...turnUrls,
-    ],
-  });
-
-  // Send ICE candidates via signaling
-  pc.onLocalCandidate((candidate, mid) => {
-    console.debug('[sidecar] Local ICE candidate', { mid, candidate: candidate.slice(0, 50) + '...' });
-    signaling.sendIceCandidate({ candidate, sdpMid: mid }).catch(() => {});
-  });
-
-  pc.onStateChange((state) => {
-    console.log(`[sidecar] Connection state: ${state}`);
-  });
-
-  // Handle incoming DataChannel — single dc.onMessage to avoid setter overwrite
-  pc.onDataChannel((dc) => {
-    console.log(`[sidecar] DataChannel opened: ${dc.getLabel()}`);
-    bridge.attach(dc);
-
-    dc.onMessage((raw) => {
-      const size = typeof raw === 'string' ? raw.length : (raw as Buffer).length;
-      console.debug('[sidecar] DC message received', { size });
-      const consumed = bridge.handleDataChannelMessage(raw);
-      if (!consumed && needsRegistrationListener) {
-        // Internal message not forwarded to gateway — check for device registration
-        try {
-          const text = typeof raw === 'string'
-            ? raw
-            : raw instanceof Buffer
-              ? raw.toString('utf-8')
-              : new TextDecoder().decode(raw as ArrayBuffer);
-          const msg = JSON.parse(text);
-          if (msg.type === 'device-registration' && msg.deviceToken) {
-            const deviceCfg: DeviceConfig = {
-              deviceToken: msg.deviceToken,
-              stableRoomId: msg.stableRoomId || config.roomId,
-              signalingUrl: config.signalingUrl,
-              registeredAt: new Date().toISOString(),
-            };
-            saveDeviceConfig(config.deviceConfigPath, deviceCfg);
-            console.log('[sidecar] Device registered! Future connections will be automatic.');
-            dc.sendMessage(JSON.stringify({ type: 'device-registration-ack' }));
-          }
-        } catch {
-          // Not a valid registration message
-        }
-      }
-    });
-  });
-
-  // Listen for signaling messages (offers and ICE from browser)
+  // Handle relay messages from browser (via DO)
   signaling.onMessage((msg: WsServerMessage) => {
-    console.debug('[sidecar] Signaling message routed', { type: msg.type });
     switch (msg.type) {
-      case 'offer':
-        console.log('[sidecar] Received offer');
-        pc.setRemoteDescription(msg.sdp, 'offer');
-        const answer = pc.localDescription();
-        if (answer) {
-          signaling.sendAnswer(answer.sdp).catch((err: Error) => {
-            console.error('[sidecar] Failed to send answer:', err.message);
-          });
+      case 'relay': {
+        console.debug('[sidecar] Relay message received', { size: msg.data.length });
+        const consumed = bridge.handleRelayMessage(msg.data);
+        if (!consumed && needsRegistrationListener) {
+          // Internal message not forwarded to gateway — check for device registration
+          try {
+            // Reassemble may have already happened inside handleRelayMessage,
+            // but internal messages are small enough to be single-chunk
+            const parsed = JSON.parse(msg.data);
+            if (parsed.type === 'device-registration' && parsed.deviceToken) {
+              const deviceCfg: DeviceConfig = {
+                deviceToken: parsed.deviceToken,
+                stableRoomId: parsed.stableRoomId || config.roomId,
+                signalingUrl: config.signalingUrl,
+                registeredAt: new Date().toISOString(),
+              };
+              saveDeviceConfig(config.deviceConfigPath, deviceCfg);
+              console.log('[sidecar] Device registered! Future connections will be automatic.');
+              signaling.sendRelay(JSON.stringify({ type: 'device-registration-ack' }));
+            }
+          } catch {
+            // Not a valid registration message
+          }
         }
         break;
-      case 'ice':
-        pc.addRemoteCandidate(
-          msg.candidate.candidate ?? '',
-          msg.candidate.sdpMid ?? '0',
-        );
+      }
+      case 'peer-joined':
+        console.log(`[sidecar] Peer joined: ${msg.role} (${msg.peerId})`);
+        break;
+      case 'peer-left':
+        console.log(`[sidecar] Peer left: ${msg.peerId}`);
         break;
     }
   });
@@ -204,7 +151,6 @@ async function main(): Promise<void> {
     console.log('\n[sidecar] Shutting down...');
     signaling.close();
     bridge.close();
-    pc.close();
     process.exit(0);
   };
 

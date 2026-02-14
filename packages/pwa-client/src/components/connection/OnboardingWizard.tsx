@@ -182,7 +182,7 @@ export function OnboardingWizard({ onPaired }: OnboardingWizardProps) {
         {step === 1 && (
           <>
             <p className="text-sm text-muted-foreground">
-              The sidecar proxy bridges your browser to the OpenClaw gateway via WebRTC.
+              The sidecar proxy bridges your browser to the OpenClaw gateway via WebSocket relay.
               Run this command on the machine where OpenClaw is running:
             </p>
             <div className="flex items-center gap-2 rounded-md bg-muted p-3 font-mono text-sm">

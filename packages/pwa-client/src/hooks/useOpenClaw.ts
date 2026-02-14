@@ -1,7 +1,7 @@
 import { useRef, useCallback } from 'react';
 import { useConnectionStore } from '@/stores/connection';
 import { useChatStore } from '@/stores/chat';
-import { WebRTCConnectionManager } from '@/lib/webrtc/connection-manager';
+import { ConnectionManager } from '@/lib/webrtc/connection-manager';
 
 interface OpenClawConnection {
   connect: (signalingUrl: string, roomId: string) => Promise<void>;
@@ -11,7 +11,7 @@ interface OpenClawConnection {
 }
 
 export function useOpenClaw(): OpenClawConnection {
-  const managerRef = useRef<WebRTCConnectionManager | null>(null);
+  const managerRef = useRef<ConnectionManager | null>(null);
   const pendingRegistration = useRef<{ deviceToken: string; stableRoomId: string } | null>(null);
   const setStatus = useConnectionStore((s) => s.setStatus);
   const setError = useConnectionStore((s) => s.setError);
@@ -36,7 +36,7 @@ export function useOpenClaw(): OpenClawConnection {
 
         setStatus('signaling');
 
-        const manager = new WebRTCConnectionManager(signalingUrl, roomId);
+        const manager = new ConnectionManager(signalingUrl, roomId);
         managerRef.current = manager;
 
         manager.addEventListener('connected', () => {
@@ -134,7 +134,7 @@ export function useOpenClaw(): OpenClawConnection {
           stableRoomId,
         }));
       } else {
-        // Queue — will be sent when DataChannel opens
+        // Queue — will be sent when relay connects
         pendingRegistration.current = { deviceToken, stableRoomId };
       }
     },

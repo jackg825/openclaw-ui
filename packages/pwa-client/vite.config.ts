@@ -14,7 +14,7 @@ export default defineConfig({
       manifest: {
         name: 'OpenClaw Web Client',
         short_name: 'OpenClaw',
-        description: 'Rich WebRTC client for OpenClaw AI agent gateway',
+        description: 'Rich web client for OpenClaw AI agent gateway',
         theme_color: '#0d1117',
         background_color: '#0d1117',
         display: 'standalone',

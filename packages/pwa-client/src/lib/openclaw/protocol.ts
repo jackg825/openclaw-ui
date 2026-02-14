@@ -5,7 +5,7 @@ import type {
   ConnectResult,
   AgentRunResult,
 } from '@shared/openclaw-protocol';
-import type { WebRTCConnectionManager } from '../webrtc/connection-manager';
+import type { ConnectionManager } from '../webrtc/connection-manager';
 
 const REQUEST_TIMEOUT = 30_000; // 30 seconds
 
@@ -16,10 +16,10 @@ interface PendingRequest {
 }
 
 export class OpenClawProtocol extends EventTarget {
-  private connection: WebRTCConnectionManager;
+  private connection: ConnectionManager;
   private pendingRequests = new Map<string, PendingRequest>();
 
-  constructor(connection: WebRTCConnectionManager) {
+  constructor(connection: ConnectionManager) {
     super();
     this.connection = connection;
     this.connection.onMessage(this.handleFrame.bind(this));

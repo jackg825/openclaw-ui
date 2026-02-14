@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { OpenClawProtocol } from './protocol';
-import type { WebRTCConnectionManager } from '../webrtc/connection-manager';
+import type { ConnectionManager } from '../webrtc/connection-manager';
 
-// Mock WebRTCConnectionManager
+// Mock ConnectionManager
 function createMockConnection() {
   const messageHandlers: ((message: string) => void)[] = [];
   let lastSent: string | null = null;
@@ -35,7 +35,7 @@ describe('OpenClawProtocol', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mockConnection = createMockConnection();
-    protocol = new OpenClawProtocol(mockConnection as unknown as WebRTCConnectionManager);
+    protocol = new OpenClawProtocol(mockConnection as unknown as ConnectionManager);
   });
 
   afterEach(() => {
