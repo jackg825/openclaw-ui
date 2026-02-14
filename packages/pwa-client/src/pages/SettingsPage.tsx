@@ -9,6 +9,8 @@ import {
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { useSettingsStore, type Theme } from '@/stores/settings';
+import { useAuthStore } from '@/stores/auth';
+import { DeviceList } from '@/components/settings/DeviceList';
 
 export function SettingsPage() {
   const {
@@ -23,6 +25,18 @@ export function SettingsPage() {
     voiceProvider,
     setVoiceProvider,
   } = useSettingsStore();
+
+  const user = useAuthStore((s) => s.user);
+  const clearSession = useAuthStore((s) => s.clearSession);
+
+  function handleLogout() {
+    clearSession();
+    useSettingsStore.getState().setUserToken(null);
+    useSettingsStore.getState().setStableRoomId(null);
+    if (window.google?.accounts?.id) {
+      google.accounts.id.disableAutoSelect();
+    }
+  }
 
   return (
     <div className="space-y-6 p-6 max-w-2xl">
@@ -124,6 +138,38 @@ export function SettingsPage() {
               </Button>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Devices</CardTitle>
+          <CardDescription>Your registered devices</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DeviceList />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Account</CardTitle>
+          <CardDescription>Your Google account</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3">
+            {user?.picture && (
+              <img src={user.picture} alt="" className="h-10 w-10 rounded-full" />
+            )}
+            <div>
+              <p className="text-sm font-medium">{user?.name}</p>
+              <p className="text-xs text-muted-foreground">{user?.email}</p>
+            </div>
+          </div>
+          <Separator />
+          <Button variant="outline" size="sm" onClick={handleLogout}>
+            Sign Out
+          </Button>
         </CardContent>
       </Card>
     </div>
