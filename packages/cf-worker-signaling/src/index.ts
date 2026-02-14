@@ -41,14 +41,23 @@ export default {
     const url = new URL(request.url);
 
     try {
-      // L2: IP Blocklist — check R2 for blocked IPs
-      const clientIp = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-      const blocked = await getSignaling(env.SIGNALING_BUCKET, `blocklist:ip:${clientIp}`);
-      if (blocked) {
-        return new Response(JSON.stringify({ error: 'Forbidden' }), {
-          status: 403,
-          headers: { 'Content-Type': 'application/json', ...cors },
-        });
+      // L2: IP Blocklist — fail-open if R2 is unavailable
+      const clientIp = request.headers.get('CF-Connecting-IP');
+      if (clientIp) {
+        try {
+          const blocked = await getSignaling(env.SIGNALING_BUCKET, `blocklist:ip:${clientIp}`);
+          if (blocked) {
+            return new Response(JSON.stringify({ error: 'Forbidden' }), {
+              status: 403,
+              headers: { 'Content-Type': 'application/json', ...cors },
+            });
+          }
+        } catch (err) {
+          console.error('[worker] IP blocklist check failed, allowing request', {
+            ip: clientIp,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
 
       // WebSocket signaling via Durable Object

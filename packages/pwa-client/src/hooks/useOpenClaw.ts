@@ -67,8 +67,13 @@ export function useOpenClaw(): OpenClawConnection {
         });
 
         manager.addEventListener('error', (e) => {
-          console.debug('[hook:openclaw] Error', { detail: (e as CustomEvent).detail });
-          setError((e as CustomEvent).detail);
+          const detail = (e as CustomEvent).detail;
+          console.debug('[hook:openclaw] Error', { detail });
+          if (typeof detail === 'string') {
+            setError(detail);
+          } else if (detail && typeof detail === 'object') {
+            setError(detail.message, detail.code);
+          }
         });
 
         // Handle incoming messages

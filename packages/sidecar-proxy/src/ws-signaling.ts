@@ -45,14 +45,24 @@ export class WsSidecarSignaling {
     });
 
     this.ws.on('message', (data) => {
+      let msg: WsServerMessage;
       try {
-        const msg: WsServerMessage = JSON.parse(data.toString());
-        console.debug('[ws-signaling] Received', { type: msg.type });
-        for (const handler of this.handlers) {
-          handler(msg);
-        }
+        msg = JSON.parse(data.toString());
       } catch {
-        console.debug('[ws-signaling] Malformed message, ignoring', { size: data.toString().length });
+        console.warn('[ws-signaling] Malformed JSON message, ignoring', { size: data.toString().length });
+        return;
+      }
+
+      console.debug('[ws-signaling] Received', { type: msg.type });
+      for (const handler of this.handlers) {
+        try {
+          handler(msg);
+        } catch (err) {
+          console.error('[ws-signaling] Message handler error', {
+            type: msg.type,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     });
 

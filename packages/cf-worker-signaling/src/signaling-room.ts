@@ -119,6 +119,7 @@ export class SignalingRoom extends DurableObject {
         if (now - att.windowStart > RATE_LIMIT_WINDOW_MS) {
           att.msgCount = 0;
           att.windowStart = now;
+          if (att.violations > 0) att.violations--;
         }
 
         if (att.msgCount >= RATE_LIMIT_MAX_MSGS) {
@@ -140,6 +141,10 @@ export class SignalingRoom extends DurableObject {
         this.broadcastExcept(ws, text);
         break;
       }
+
+      default:
+        this.sendError(ws, 'invalid-message', `Unknown message type: ${(msg as Record<string, unknown>).type}`);
+        return;
     }
 
     // Reset cleanup alarm on activity
@@ -154,10 +159,19 @@ export class SignalingRoom extends DurableObject {
         peerId: att.peerId,
       }));
     }
-    ws.close(code, reason);
+    try {
+      ws.close(code, reason);
+    } catch {
+      // Already closed
+    }
   }
 
-  async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
+  async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    const att = ws.deserializeAttachment() as PeerAttachment | null;
+    console.error('[signaling-room] WebSocket error', {
+      peerId: att?.peerId ?? 'unknown',
+      error: error instanceof Error ? error.message : String(error),
+    });
     ws.close(1011, 'WebSocket error');
   }
 
@@ -185,8 +199,10 @@ export class SignalingRoom extends DurableObject {
       if (ws !== sender) {
         try {
           ws.send(message);
-        } catch {
-          // Peer already disconnected
+        } catch (err) {
+          console.debug('[signaling-room] Send failed (peer likely disconnected)', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     }

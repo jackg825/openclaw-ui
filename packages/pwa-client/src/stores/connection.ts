@@ -51,7 +51,11 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
 
   setStatus: (status) => {
     console.debug('[connection-store] Status change', { to: status });
-    set({ status, error: status === 'failed' ? undefined : null });
+    if (status === 'failed') {
+      set({ status });
+    } else {
+      set({ status, error: null, errorCode: null });
+    }
   },
   setDeviceToken: (deviceToken) => {
     console.debug('[connection-store] Device token set', { token: deviceToken.slice(0, 8) + '...' });

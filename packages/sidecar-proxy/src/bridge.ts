@@ -36,7 +36,7 @@ export class Bridge {
     });
 
     this.ws.on('close', () => {
-      console.log('[bridge] Gateway WebSocket closed');
+      console.warn('[bridge] Gateway WebSocket closed — relay messages will be dropped');
     });
 
     this.ws.on('error', (err: Error) => {
@@ -68,7 +68,7 @@ export class Bridge {
       console.debug('[bridge] relay→GW', { size: assembled.length });
       this.ws.send(assembled);
     } else {
-      console.debug('[bridge] relay→GW dropped, gateway not connected', { size: assembled.length });
+      console.error('[bridge] relay→GW DROPPED: gateway not connected', { size: assembled.length });
     }
     return true;
   }

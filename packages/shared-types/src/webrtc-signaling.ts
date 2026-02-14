@@ -88,6 +88,11 @@ export type WsErrorCode =
   | 'invalid-message'   // JSON parse failure
   | 'not-joined';       // Relay attempted before join
 
+export interface WsDisconnectReason {
+  code: WsErrorCode;
+  retryAfter?: number;
+}
+
 // ── WebSocket Signaling Protocol ──
 // Messages exchanged via Durable Object (SignalingRoom) WebSocket connections
 

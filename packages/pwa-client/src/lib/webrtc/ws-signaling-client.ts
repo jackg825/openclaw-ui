@@ -1,4 +1,4 @@
-import type { WsServerMessage, WsErrorCode } from '@shared/webrtc-signaling';
+import type { WsServerMessage, WsErrorCode, WsDisconnectReason } from '@shared/webrtc-signaling';
 
 /**
  * WebSocket relay client for the browser PWA.
@@ -8,7 +8,7 @@ import type { WsServerMessage, WsErrorCode } from '@shared/webrtc-signaling';
 export class WsSignalingClient {
   private ws: WebSocket | null = null;
   private handlers: ((msg: WsServerMessage) => void)[] = [];
-  private disconnectHandlers: ((reason?: { code: WsErrorCode; retryAfter?: number }) => void)[] = [];
+  private disconnectHandlers: ((reason?: WsDisconnectReason) => void)[] = [];
   private errorHandlers: ((code: WsErrorCode, message: string, retryAfter?: number) => void)[] = [];
   private baseUrl: string;
   private roomId: string;
@@ -47,22 +47,31 @@ export class WsSignalingClient {
     }));
 
     this.ws.onmessage = (event) => {
+      let msg: WsServerMessage;
       try {
-        const msg: WsServerMessage = JSON.parse(event.data);
-        console.debug('[signaling] Received', { type: msg.type });
-
-        // Detect structured WsError with code
-        if (msg.type === 'error' && msg.code) {
-          for (const handler of this.errorHandlers) {
-            handler(msg.code, msg.message, msg.retryAfter);
-          }
-        }
-
-        for (const handler of this.handlers) {
-          handler(msg);
-        }
+        msg = JSON.parse(event.data);
       } catch {
-        console.debug('[signaling] Malformed message, ignoring');
+        console.warn('[signaling] Malformed JSON message, ignoring');
+        return;
+      }
+
+      console.debug('[signaling] Received', { type: msg.type });
+
+      if (msg.type === 'error' && msg.code) {
+        for (const handler of this.errorHandlers) {
+          handler(msg.code, msg.message, msg.retryAfter);
+        }
+      }
+
+      for (const handler of this.handlers) {
+        try {
+          handler(msg);
+        } catch (err) {
+          console.error('[signaling] Message handler error', {
+            type: msg.type,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     };
 
@@ -90,7 +99,7 @@ export class WsSignalingClient {
     this.handlers.push(handler);
   }
 
-  onDisconnect(handler: (reason?: { code: WsErrorCode; retryAfter?: number }) => void): void {
+  onDisconnect(handler: (reason?: WsDisconnectReason) => void): void {
     this.disconnectHandlers.push(handler);
   }
 
@@ -107,7 +116,7 @@ export class WsSignalingClient {
     this.errorHandlers = [];
   }
 
-  private closeCodeToReason(code: number): { code: WsErrorCode; retryAfter?: number } | undefined {
+  private closeCodeToReason(code: number): WsDisconnectReason | undefined {
     switch (code) {
       case 1008: return { code: 'blocked' };
       case 1009: return { code: 'payload-too-large' };

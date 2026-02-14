@@ -1,4 +1,4 @@
-import type { WsServerMessage, WsErrorCode } from '@shared/webrtc-signaling';
+import type { WsServerMessage, WsErrorCode, WsDisconnectReason } from '@shared/webrtc-signaling';
 import { MessageChunker } from './chunker';
 import { ReconnectionManager } from './reconnection';
 import { WsSignalingClient } from './ws-signaling-client';
@@ -14,6 +14,7 @@ export class ConnectionManager extends EventTarget {
   private state: ConnectionState = 'idle';
   private messageHandlers: ((message: string) => void)[] = [];
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  private rateLimitTimer: ReturnType<typeof setTimeout> | null = null;
   private roomId: string;
   private signalingUrl: string;
   private peerId: string;
@@ -107,6 +108,10 @@ export class ConnectionManager extends EventTarget {
 
   disconnect(): void {
     this.clearHandshakeTimer();
+    if (this.rateLimitTimer) {
+      clearTimeout(this.rateLimitTimer);
+      this.rateLimitTimer = null;
+    }
     this.reconnection.cancel();
     this.signaling.close();
     this.chunker.clear();
@@ -138,7 +143,7 @@ export class ConnectionManager extends EventTarget {
     }
   }
 
-  private handleDisconnect(reason?: { code: WsErrorCode; retryAfter?: number }): void {
+  private handleDisconnect(reason?: WsDisconnectReason): void {
     if (this.state === 'reconnecting' || this.state === 'idle') return;
     console.debug('[connection] Disconnect detected', { from: this.state, reason });
 
@@ -155,7 +160,9 @@ export class ConnectionManager extends EventTarget {
 
     // Rate-limited — use server-specified delay
     if (reason?.code === 'rate-limited' && reason.retryAfter) {
-      setTimeout(() => {
+      this.rateLimitTimer = setTimeout(() => {
+        this.rateLimitTimer = null;
+        if (this.state === 'idle') return;
         this.reconnection.schedule(async () => {
           try {
             this.signaling.close();

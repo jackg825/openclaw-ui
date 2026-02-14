@@ -125,12 +125,17 @@ async function main(): Promise<void> {
                 signalingUrl: config.signalingUrl,
                 registeredAt: new Date().toISOString(),
               };
-              saveDeviceConfig(config.deviceConfigPath, deviceCfg);
-              console.log('[sidecar] Device registered! Future connections will be automatic.');
-              signaling.sendRelay(JSON.stringify({ type: 'device-registration-ack' }));
+              try {
+                saveDeviceConfig(config.deviceConfigPath, deviceCfg);
+                console.log('[sidecar] Device registered! Future connections will be automatic.');
+                signaling.sendRelay(JSON.stringify({ type: 'device-registration-ack' }));
+                needsRegistrationListener = false;
+              } catch (err) {
+                console.error('[sidecar] Failed to save device config:', (err as Error).message);
+              }
             }
           } catch {
-            // Not a valid registration message
+            // Not valid JSON — not a registration message
           }
         }
         break;
