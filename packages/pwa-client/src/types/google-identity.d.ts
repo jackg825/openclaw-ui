@@ -1,3 +1,7 @@
+interface Window {
+  google?: typeof google;
+}
+
 declare namespace google.accounts.id {
   interface CredentialResponse {
     credential: string;
