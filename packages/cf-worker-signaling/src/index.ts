@@ -1,6 +1,5 @@
 import type { Env, DeviceData } from './types.js';
 import { getSignaling } from './storage.js';
-import { handleTurnCreds } from './routes/turn-creds.js';
 import { handleCreateRoom } from './routes/create-room.js';
 import { handleResolve } from './routes/resolve.js';
 import { handleRoomStatus } from './routes/room-status.js';
@@ -24,7 +23,6 @@ const PUBLIC_ENDPOINTS = new Set([
   '/room-status',
   '/register-device',
   '/reconnect',
-  '/turn-creds',
 ]);
 
 export default {
@@ -38,6 +36,16 @@ export default {
     const url = new URL(request.url);
 
     try {
+      // L2: IP Blocklist — check R2 for blocked IPs
+      const clientIp = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+      const blocked = await getSignaling(env.SIGNALING_BUCKET, `blocklist:ip:${clientIp}`);
+      if (blocked) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json', ...cors },
+        });
+      }
+
       // WebSocket signaling via Durable Object
       if (url.pathname === '/ws') {
         const roomId = url.searchParams.get('room');
@@ -89,9 +97,6 @@ export default {
             break;
           case '/reconnect':
             response = await handleReconnect(request, env);
-            break;
-          case '/turn-creds':
-            response = await handleTurnCreds(request, env);
             break;
           default:
             response = new Response(

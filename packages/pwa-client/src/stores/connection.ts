@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ConnectResult } from '@shared/openclaw-protocol';
+import type { WsErrorCode } from '@shared/webrtc-signaling';
 
 export type ConnectionStatus =
   | 'disconnected'
@@ -16,17 +17,18 @@ interface ConnectionState {
   deviceToken: string | null;
   gatewayInfo: ConnectResult['gateway'] | null;
   error: string | null;
+  errorCode: WsErrorCode | null;
   latency: number | null;
-  transport: 'p2p' | 'turn' | null;
+  transport: 'ws-relay' | null;
   pairingCode: string | null;
   pairingExpiresAt: string | null;
 
   setStatus: (status: ConnectionStatus) => void;
   setDeviceToken: (token: string) => void;
   setGatewayInfo: (info: ConnectResult['gateway']) => void;
-  setError: (error: string | null) => void;
+  setError: (error: string | null, code?: WsErrorCode) => void;
   setLatency: (ms: number) => void;
-  setTransport: (transport: 'p2p' | 'turn') => void;
+  setTransport: (transport: 'ws-relay') => void;
   setPairingCode: (code: string | null) => void;
   setPairingExpiresAt: (expiresAt: string | null) => void;
   reset: () => void;
@@ -37,6 +39,7 @@ const initialState = {
   deviceToken: null,
   gatewayInfo: null,
   error: null,
+  errorCode: null as WsErrorCode | null,
   latency: null,
   transport: null,
   pairingCode: null,
@@ -55,9 +58,9 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
     set({ deviceToken });
   },
   setGatewayInfo: (gatewayInfo) => set({ gatewayInfo }),
-  setError: (error) => {
-    console.debug('[connection-store] Error', { error });
-    set({ error, status: 'failed' });
+  setError: (error, code) => {
+    console.debug('[connection-store] Error', { error, code });
+    set({ error, errorCode: code ?? null, status: 'failed' });
   },
   setLatency: (latency) => set({ latency }),
   setTransport: (transport) => {

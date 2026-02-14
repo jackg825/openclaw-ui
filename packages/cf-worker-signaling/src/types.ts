@@ -1,8 +1,6 @@
 export interface Env {
   SIGNALING_BUCKET: R2Bucket;
   SIGNALING_ROOM: DurableObjectNamespace;
-  TURN_KEY_ID: string;
-  TURN_API_TOKEN: string;
   ROOM_SECRET?: string;
   ALLOWED_ORIGINS?: string;
 }
@@ -41,4 +39,10 @@ export interface DeviceData {
   userToken: string;
   name: string;
   registeredAt: string;
+}
+
+export interface BlocklistEntry {
+  reason: string;
+  blockedAt: string;
+  expiresAt?: string;
 }
