@@ -6,8 +6,10 @@ import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useSettingsSync } from '@/hooks/useSettingsSync';
 
 export function Shell() {
+  useSettingsSync();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
