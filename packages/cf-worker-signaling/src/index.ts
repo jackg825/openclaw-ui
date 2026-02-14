@@ -1,5 +1,9 @@
 import type { Env, DeviceData } from './types.js';
 import { getSignaling } from './storage.js';
+import { authenticateRequest } from './auth.js';
+import { handleAuthGoogle } from './routes/auth-google.js';
+import { handleGetSettings, handlePutSettings } from './routes/settings.js';
+import { handleGetDevices } from './routes/devices.js';
 import { handleCreateRoom } from './routes/create-room.js';
 import { handleResolve } from './routes/resolve.js';
 import { handleRoomStatus } from './routes/room-status.js';
@@ -12,12 +16,13 @@ function corsHeaders(env: Env): Record<string, string> {
   const origin = env.ALLOWED_ORIGINS || '*';
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, Upgrade',
   };
 }
 
 const PUBLIC_ENDPOINTS = new Set([
+  '/auth/google',
   '/create-room',
   '/resolve',
   '/room-status',
@@ -79,10 +84,13 @@ export default {
         return stub.fetch(request);
       }
 
-      // Public pairing endpoints (no auth)
+      // Public endpoints (no JWT required)
       if (PUBLIC_ENDPOINTS.has(url.pathname)) {
         let response: Response;
         switch (url.pathname) {
+          case '/auth/google':
+            response = await handleAuthGoogle(request, env);
+            break;
           case '/create-room':
             response = await handleCreateRoom(request, env);
             break;
@@ -110,7 +118,29 @@ export default {
         return response;
       }
 
-      // Auth-required endpoints (none currently — all moved to public)
+      // All other endpoints require JWT authentication
+      const claims = await authenticateRequest(request, env.SESSION_SECRET);
+      if (claims instanceof Response) {
+        for (const [k, v] of Object.entries(cors)) claims.headers.set(k, v);
+        return claims;
+      }
+
+      // Settings endpoints
+      if (url.pathname === '/settings') {
+        const response = request.method === 'PUT'
+          ? await handlePutSettings(request, env, claims)
+          : await handleGetSettings(request, env, claims);
+        for (const [k, v] of Object.entries(cors)) response.headers.set(k, v);
+        return response;
+      }
+
+      // Devices endpoint
+      if (url.pathname === '/devices') {
+        const response = await handleGetDevices(request, env, claims);
+        for (const [k, v] of Object.entries(cors)) response.headers.set(k, v);
+        return response;
+      }
+
       return new Response(
         JSON.stringify({ error: 'Not Found' }),
         { status: 404, headers: { 'Content-Type': 'application/json', ...cors } },
