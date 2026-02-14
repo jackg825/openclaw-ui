@@ -25,6 +25,7 @@ export interface DeviceRegistration {
 export interface DeviceInfo {
   deviceToken: string;
   name: string;
+  type: 'desktop' | 'mobile' | 'tablet' | 'unknown';
   lastSeen: string;
   registeredAt: string;
 }
@@ -34,6 +35,46 @@ export interface ReconnectResponse {
   devices?: DeviceInfo[];
   pairingCode?: string;
   pairingExpiresAt?: string;
+}
+
+// ── Google SSO & Settings Sync ──
+
+export interface AccountData {
+  googleSub: string;
+  email: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  userToken: string;
+  stableRoomId: string;
+  createdAt: string;
+  lastLoginAt: string;
+}
+
+export interface SyncedSettings {
+  theme: 'dark' | 'light' | 'system';
+  defaultSignalingUrl: string;
+  defaultRoomId: string;
+  voiceEnabled: boolean;
+  voiceProvider: 'web-speech' | 'deepgram';
+  deepgramApiKey: string | null;
+  updatedAt: string;
+}
+
+export interface GoogleUser {
+  sub: string;
+  email: string;
+  name: string;
+  picture: string;
+}
+
+export interface AuthResponse {
+  user: GoogleUser;
+  sessionToken: string;
+  expiresAt: number;
+  settings: SyncedSettings | null;
+  isNewAccount: boolean;
+  userToken: string;
+  stableRoomId: string;
 }
 
 // ── Security Error Codes ──
