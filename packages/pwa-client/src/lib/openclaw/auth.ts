@@ -18,15 +18,17 @@ export function buildConnectParams(deviceToken?: string): ConnectParams {
   const token = deviceToken ?? getDeviceToken() ?? undefined;
 
   return {
-    role: 'operator',
-    scopes: ['agent', 'skill', 'exec'],
-    auth: token ? { deviceToken: token } : undefined,
-    device: {
-      name: navigator.userAgent.includes('Mobile') ? 'Mobile Browser' : 'Desktop Browser',
-      platform: navigator.platform,
-      version: '0.1.0',
-    },
     minProtocol: 1,
     maxProtocol: 1,
+    client: {
+      id: 'openclaw-ui',
+      displayName: 'OpenClaw Web Client',
+      version: '0.1.0',
+      platform: navigator.platform,
+      mode: 'browser',
+      instanceId: crypto.randomUUID(),
+    },
+    auth: token ? { token } : undefined,
+    scopes: ['agent', 'skill', 'exec'],
   };
 }

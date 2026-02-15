@@ -1,13 +1,14 @@
 import type {
   OCRequest,
   OCFrame,
-  ConnectParams,
-  ConnectResult,
-  AgentRunResult,
+  ChatSendParams,
+  TokenUsage,
+  SessionInfo,
+  GatewayEventMap,
 } from '@shared/openclaw-protocol';
-import type { ConnectionManager } from '../webrtc/connection-manager';
 
-const REQUEST_TIMEOUT = 30_000; // 30 seconds
+const REQUEST_TIMEOUT = 30_000; // 30s
+const CHAT_SEND_TIMEOUT = 120_000; // 2min — chat.send waits for full turn
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -15,18 +16,47 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout>;
 }
 
-export class OpenClawProtocol extends EventTarget {
-  private connection: ConnectionManager;
-  private pendingRequests = new Map<string, PendingRequest>();
+type EventHandler<T> = (payload: T) => void;
 
-  constructor(connection: ConnectionManager) {
-    super();
-    this.connection = connection;
-    this.connection.onMessage(this.handleFrame.bind(this));
+/**
+ * Typed protocol layer for OpenClaw Gateway JSON-RPC.
+ *
+ * Uses typed on() instead of EventTarget for compile-time event safety.
+ * Browser does NOT send connect handshake — sidecar handles auth.
+ */
+export class OpenClawProtocol {
+  private sendFn: (data: string) => void;
+  private pendingRequests = new Map<string, PendingRequest>();
+  private listeners = new Map<string, Set<EventHandler<unknown>>>();
+
+  constructor(sendFn: (data: string) => void) {
+    this.sendFn = sendFn;
+  }
+
+  /** Subscribe to a typed Gateway event. Returns unsubscribe function. */
+  on<E extends keyof GatewayEventMap>(
+    event: E,
+    handler: EventHandler<GatewayEventMap[E]>,
+  ): () => void {
+    const key = event as string;
+    if (!this.listeners.has(key)) {
+      this.listeners.set(key, new Set());
+    }
+    const set = this.listeners.get(key)!;
+    set.add(handler as EventHandler<unknown>);
+
+    return () => {
+      set.delete(handler as EventHandler<unknown>);
+      if (set.size === 0) this.listeners.delete(key);
+    };
   }
 
   /** Send a request and wait for response */
-  async request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  async request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs = REQUEST_TIMEOUT,
+  ): Promise<T> {
     const id = crypto.randomUUID();
     const frame: OCRequest = { type: 'req', id, method, params };
 
@@ -36,7 +66,7 @@ export class OpenClawProtocol extends EventTarget {
         console.debug('[protocol] Request timeout', { method, id: id.slice(0, 8) });
         this.pendingRequests.delete(id);
         reject(new Error(`Request ${method} timed out`));
-      }, REQUEST_TIMEOUT);
+      }, timeoutMs);
 
       this.pendingRequests.set(id, {
         resolve: resolve as (value: unknown) => void,
@@ -44,65 +74,88 @@ export class OpenClawProtocol extends EventTarget {
         timeout,
       });
 
-      this.connection.send(JSON.stringify(frame));
+      this.sendFn(JSON.stringify(frame));
     });
   }
 
-  /** Perform connect handshake */
-  async connect(params: ConnectParams): Promise<ConnectResult> {
-    return this.request<ConnectResult>('connect', params as unknown as Record<string, unknown>);
+  /** Send a chat message (chat.send RPC). Returns runId. */
+  async chatSend(params: ChatSendParams): Promise<{ runId: string }> {
+    return this.request<{ runId: string }>(
+      'chat.send',
+      params as unknown as Record<string, unknown>,
+      CHAT_SEND_TIMEOUT,
+    );
   }
 
-  /** Start an agent run */
-  async agentRun(prompt: string, agentId?: string): Promise<AgentRunResult> {
-    const params: Record<string, unknown> = { prompt };
-    if (agentId) params.agentId = agentId;
-    return this.request<AgentRunResult>('agent', params);
+  /** Abort a running chat turn */
+  async chatAbort(runId: string): Promise<void> {
+    return this.request('chat.abort', { runId });
+  }
+
+  /** List sessions */
+  async sessionsList(limit?: number): Promise<{ sessions: SessionInfo[] }> {
+    const params: Record<string, unknown> = {};
+    if (limit != null) params.limit = limit;
+    return this.request('sessions.list', params);
+  }
+
+  /** Get token usage for a session */
+  async sessionsUsage(sessionKey: string): Promise<TokenUsage> {
+    return this.request('sessions.usage', { sessionKey });
   }
 
   /** Resolve an approval request */
-  async resolveApproval(runId: string, action: 'approve' | 'deny'): Promise<void> {
-    return this.request('exec.approval.resolve', { runId, action });
+  async resolveApproval(
+    runId: string,
+    toolCallId: string,
+    action: 'approve' | 'deny',
+  ): Promise<void> {
+    return this.request('exec.approval.resolve', { runId, toolCallId, action });
   }
 
-  /** Clean up pending requests */
-  destroy(): void {
-    for (const [id, pending] of this.pendingRequests) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error('Protocol destroyed'));
-      this.pendingRequests.delete(id);
-    }
-    this.connection.offMessage(this.handleFrame.bind(this));
-  }
-
-  /** Handle incoming frames from the DataChannel */
-  private handleFrame(raw: string): void {
+  /** Handle an incoming raw frame (call from message handler) */
+  handleFrame(raw: string): void {
     let frame: OCFrame;
     try {
       frame = JSON.parse(raw) as OCFrame;
     } catch {
-      console.debug('[protocol] Frame parse error', { size: raw.length });
-      return; // Ignore non-JSON messages
+      // Not JSON — silently skip (e.g. chunk envelope, relay control)
+      return;
     }
 
     if (frame.type === 'res') {
       const pending = this.pendingRequests.get(frame.id);
       if (pending) {
-        console.debug('[protocol] Response received', { id: frame.id.slice(0, 8), ok: frame.ok });
+        console.debug('[protocol] Response', { id: frame.id.slice(0, 8), ok: frame.ok });
         clearTimeout(pending.timeout);
         this.pendingRequests.delete(frame.id);
         if (frame.ok) {
           pending.resolve(frame.payload);
         } else {
-          console.debug('[protocol] Response error', { id: frame.id.slice(0, 8), error: frame.error });
           pending.reject(frame.error ?? new Error('Unknown error'));
         }
-      } else {
-        console.debug('[protocol] Orphan response (no pending request)', { id: frame.id.slice(0, 8) });
       }
     } else if (frame.type === 'event') {
-      console.debug('[protocol] Event received', { event: frame.event });
-      this.dispatchEvent(new CustomEvent(frame.event, { detail: frame.payload }));
+      const handlers = this.listeners.get(frame.event);
+      if (handlers) {
+        for (const handler of handlers) {
+          try {
+            handler(frame.payload);
+          } catch (err) {
+            console.error('[protocol] Event handler error', { event: frame.event, err });
+          }
+        }
+      }
     }
+  }
+
+  /** Clean up pending requests and listeners */
+  destroy(): void {
+    for (const [, pending] of this.pendingRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error('Protocol destroyed'));
+    }
+    this.pendingRequests.clear();
+    this.listeners.clear();
   }
 }
