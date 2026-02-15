@@ -1,51 +1,137 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { useConnectionStore } from '@/stores/connection';
 import { useChatStore } from '@/stores/chat';
-import { WebRTCConnectionManager } from '@/lib/webrtc/connection-manager';
+import { ConnectionManager } from '@/lib/webrtc/connection-manager';
+import { OpenClawProtocol } from '@/lib/openclaw/protocol';
+import { useStreamAccumulator } from './useStreamAccumulator';
+import type {
+  ChatEventPayload,
+  AgentEventPayload,
+  LifecycleData,
+  ToolEventData,
+  AssistantStreamData,
+} from '@shared/openclaw-protocol';
 
 interface OpenClawConnection {
   connect: (signalingUrl: string, roomId: string) => Promise<void>;
   disconnect: () => void;
   sendMessage: (prompt: string) => void;
+  abortRun: () => void;
   sendDeviceRegistration: (deviceToken: string, stableRoomId: string) => void;
 }
 
 export function useOpenClaw(): OpenClawConnection {
-  const managerRef = useRef<WebRTCConnectionManager | null>(null);
+  const managerRef = useRef<ConnectionManager | null>(null);
+  const protocolRef = useRef<OpenClawProtocol | null>(null);
   const pendingRegistration = useRef<{ deviceToken: string; stableRoomId: string } | null>(null);
+
   const setStatus = useConnectionStore((s) => s.setStatus);
   const setError = useConnectionStore((s) => s.setError);
-  const setGatewayInfo = useConnectionStore((s) => s.setGatewayInfo);
-  const setDeviceToken = useConnectionStore((s) => s.setDeviceToken);
-  const setLatency = useConnectionStore((s) => s.setLatency);
-  const setTransport = useConnectionStore((s) => s.setTransport);
   const reset = useConnectionStore((s) => s.reset);
+
   const addMessage = useChatStore((s) => s.addMessage);
-  const appendToLastMessage = useChatStore((s) => s.appendToLastMessage);
-  const setStreaming = useChatStore((s) => s.setStreaming);
+  const startAgentTurn = useChatStore((s) => s.startAgentTurn);
+  const appendTextSegment = useChatStore((s) => s.appendTextSegment);
+  const appendThinkingSegment = useChatStore((s) => s.appendThinkingSegment);
+  const addToolCall = useChatStore((s) => s.addToolCall);
+  const updateToolCall = useChatStore((s) => s.updateToolCall);
+  const addErrorSegment = useChatStore((s) => s.addErrorSegment);
+  const finishTurn = useChatStore((s) => s.finishTurn);
+  const sessionKey = useChatStore((s) => s.sessionKey);
+
+  // Stream accumulator for text deltas — batches to ~16fps
+  const textAccumulator = useStreamAccumulator(
+    useCallback((text: string) => {
+      const runId = useChatStore.getState().currentRunId;
+      if (runId) appendTextSegment(runId, text);
+    }, [appendTextSegment]),
+  );
 
   const connect = useCallback(
     async (signalingUrl: string, roomId: string) => {
       try {
-        console.debug('[hook:openclaw] Connecting', { signalingUrl, roomId });
         // Clean up previous connection
+        if (protocolRef.current) {
+          protocolRef.current.destroy();
+          protocolRef.current = null;
+        }
         if (managerRef.current) {
-          console.debug('[hook:openclaw] Disconnecting previous connection');
           managerRef.current.disconnect();
         }
 
         setStatus('signaling');
 
-        const manager = new WebRTCConnectionManager(signalingUrl, roomId);
+        const manager = new ConnectionManager(signalingUrl, roomId);
         managerRef.current = manager;
 
-        manager.addEventListener('connected', () => {
-          console.debug('[hook:openclaw] Connected');
-          setStatus('connected');
+        // Create protocol with manager's send function
+        const protocol = new OpenClawProtocol((data) => manager.send(data));
+        protocolRef.current = protocol;
 
-          // Send pending device registration if any
+        // Wire chat events
+        protocol.on('chat', (payload: ChatEventPayload) => {
+          const { runId, state } = payload;
+
+          if (state === 'delta' && payload.message?.content) {
+            const text = payload.message.content.map((b) => b.text).join('');
+            if (text) textAccumulator.append(text);
+          } else if (state === 'final') {
+            textAccumulator.flush();
+            finishTurn(runId, payload.usage);
+          } else if (state === 'error') {
+            textAccumulator.flush();
+            addErrorSegment(runId, payload.errorMessage ?? 'Unknown error');
+            finishTurn(runId);
+          } else if (state === 'aborted') {
+            textAccumulator.flush();
+            addErrorSegment(runId, 'Run aborted');
+            finishTurn(runId);
+          }
+        });
+
+        // Wire agent events
+        protocol.on('agent', (payload: AgentEventPayload) => {
+          const { runId, stream, data } = payload;
+
+          if (stream === 'lifecycle') {
+            const ld = data as unknown as LifecycleData;
+            if (ld.phase === 'start') {
+              startAgentTurn(runId);
+            } else if (ld.phase === 'error') {
+              addErrorSegment(runId, String(ld.error ?? 'Unknown error'));
+            }
+            // 'end' phase is handled by chat final event
+          }
+
+          if (stream === 'tool') {
+            const td = data as unknown as ToolEventData;
+            if (td.phase === 'start') {
+              // Flush any pending text before tool call
+              textAccumulator.flush();
+              addToolCall(runId, td.toolCallId, td.name, td.args);
+            } else if (td.phase === 'result') {
+              updateToolCall(runId, td.toolCallId, {
+                output: td.result,
+                status: td.isError ? 'error' : 'success',
+                isError: td.isError,
+              });
+            } else if (td.phase === 'update') {
+              updateToolCall(runId, td.toolCallId, {
+                output: td.partialResult,
+              });
+            }
+          }
+
+          if (stream === 'assistant') {
+            const ad = data as unknown as AssistantStreamData;
+            appendThinkingSegment(runId, ad.text);
+          }
+        });
+
+        // Connection lifecycle events
+        manager.addEventListener('connected', () => {
+          setStatus('connected');
           if (pendingRegistration.current) {
-            console.debug('[hook:openclaw] Sending queued device registration');
             const { deviceToken, stableRoomId } = pendingRegistration.current;
             manager.send(JSON.stringify({
               type: 'device-registration',
@@ -56,90 +142,82 @@ export function useOpenClaw(): OpenClawConnection {
           }
         });
 
-        manager.addEventListener('reconnecting', () => {
-          console.debug('[hook:openclaw] Reconnecting');
-          setStatus('reconnecting');
-        });
-
-        manager.addEventListener('disconnected', () => {
-          console.debug('[hook:openclaw] Disconnected');
-          setStatus('disconnected');
-        });
-
+        manager.addEventListener('reconnecting', () => setStatus('reconnecting'));
+        manager.addEventListener('disconnected', () => setStatus('disconnected'));
         manager.addEventListener('error', (e) => {
-          console.debug('[hook:openclaw] Error', { detail: (e as CustomEvent).detail });
-          setError((e as CustomEvent).detail);
+          const detail = (e as CustomEvent).detail;
+          if (typeof detail === 'string') setError(detail);
+          else if (detail && typeof detail === 'object') setError(detail.message, detail.code);
         });
 
-        // Handle incoming messages
+        // Route incoming messages through protocol
         manager.onMessage((msg) => {
-          console.debug('[hook:openclaw] Message received', { size: msg.length });
-          // Silently consume device-registration-ack
           try {
             const parsed = JSON.parse(msg);
-            if (parsed.type === 'device-registration-ack') {
-              console.debug('[hook:openclaw] Device registration acknowledged');
-              return;
-            }
+            if (parsed.type === 'device-registration-ack') return;
           } catch {
-            // Not JSON — fall through to protocol handling
+            // Not JSON — fall through
           }
-
-          // TODO: OpenClawProtocol integration
-          // protocol.handleMessage(msg) will route to chat store
+          protocol.handleFrame(msg);
         });
 
         setStatus('connecting');
         await manager.connect();
       } catch (err) {
-        console.debug('[hook:openclaw] Connection error', { error: err instanceof Error ? err.message : err });
         setError(err instanceof Error ? err.message : 'Connection failed');
       }
     },
-    [setStatus, setError],
+    [setStatus, setError, textAccumulator, startAgentTurn, appendThinkingSegment, addToolCall, updateToolCall, addErrorSegment, finishTurn],
   );
 
   const disconnect = useCallback(() => {
-    console.debug('[hook:openclaw] Disconnect requested');
+    protocolRef.current?.destroy();
+    protocolRef.current = null;
     managerRef.current?.disconnect();
     managerRef.current = null;
     pendingRegistration.current = null;
+    textAccumulator.reset();
     reset();
-  }, [reset]);
+  }, [reset, textAccumulator]);
 
   const sendMessage = useCallback(
     (prompt: string) => {
       addMessage({ role: 'user', content: prompt });
-
-      // TODO: protocol.agentRun(prompt) when protocol layer is available
-      if (managerRef.current?.getState() === 'connected') {
-        managerRef.current.send(JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'agent.run',
-          params: { prompt },
-          id: crypto.randomUUID(),
-        }));
-      }
+      protocolRef.current?.chatSend({
+        sessionKey,
+        message: prompt,
+        idempotencyKey: crypto.randomUUID(),
+      });
     },
-    [addMessage],
+    [addMessage, sessionKey],
   );
+
+  const abortRun = useCallback(() => {
+    const runId = useChatStore.getState().currentRunId;
+    if (runId) {
+      protocolRef.current?.chatAbort(runId);
+    }
+  }, []);
 
   const sendDeviceRegistration = useCallback(
     (deviceToken: string, stableRoomId: string) => {
       const manager = managerRef.current;
       if (manager?.getState() === 'connected') {
-        manager.send(JSON.stringify({
-          type: 'device-registration',
-          deviceToken,
-          stableRoomId,
-        }));
+        manager.send(JSON.stringify({ type: 'device-registration', deviceToken, stableRoomId }));
       } else {
-        // Queue — will be sent when DataChannel opens
         pendingRegistration.current = { deviceToken, stableRoomId };
       }
     },
     [],
   );
 
-  return { connect, disconnect, sendMessage, sendDeviceRegistration };
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      protocolRef.current?.destroy();
+      managerRef.current?.disconnect();
+    };
+  }, []);
+
+  return { connect, disconnect, sendMessage, abortRun, sendDeviceRegistration };
 }

@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@openclaw/shared-types": "workspace:*",
-    "node-datachannel": "^0.32.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

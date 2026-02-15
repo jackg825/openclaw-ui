@@ -1,11 +1,20 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './types.js';
-import type { WsClientMessage } from '@openclaw/shared-types';
+import type { WsClientMessage, WsErrorCode } from '@openclaw/shared-types';
+
+// Rate limiting constants
+const RATE_LIMIT_WINDOW_MS = 1_000;
+const RATE_LIMIT_MAX_MSGS = 100;
+const MAX_PAYLOAD_BYTES = 256 * 1024; // 256 KiB
+const MAX_VIOLATIONS = 5;
 
 interface PeerAttachment {
   peerId: string;
   role: 'client' | 'sidecar';
   roomId: string;
+  msgCount: number;
+  windowStart: number;
+  violations: number;
 }
 
 export class SignalingRoom extends DurableObject {
@@ -51,7 +60,7 @@ export class SignalingRoom extends DurableObject {
     try {
       msg = JSON.parse(text);
     } catch {
-      ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+      this.sendError(ws, 'invalid-message', 'Invalid JSON');
       return;
     }
 
@@ -62,6 +71,9 @@ export class SignalingRoom extends DurableObject {
           peerId: msg.peerId,
           role: msg.role,
           roomId: msg.roomId,
+          msgCount: 0,
+          windowStart: Date.now(),
+          violations: 0,
         } satisfies PeerAttachment);
 
         // Notify existing peers about the new joiner
@@ -86,18 +98,53 @@ export class SignalingRoom extends DurableObject {
         break;
       }
 
-      case 'offer':
-      case 'answer':
-      case 'ice': {
+      case 'relay': {
         const att = ws.deserializeAttachment() as PeerAttachment | null;
         if (!att) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Must join before sending signals' }));
+          this.sendError(ws, 'not-joined', 'Must join before sending relay data');
           return;
         }
-        // Relay to all other peers with sender's peerId
-        this.broadcastExcept(ws, JSON.stringify({ ...msg, peerId: att.peerId }));
+
+        // L3: Payload size check
+        const byteLength = typeof message === 'string'
+          ? new TextEncoder().encode(message as string).byteLength
+          : (message as ArrayBuffer).byteLength;
+        if (byteLength > MAX_PAYLOAD_BYTES) {
+          this.sendError(ws, 'payload-too-large', `Message exceeds ${MAX_PAYLOAD_BYTES} byte limit`);
+          return;
+        }
+
+        // L3: Sliding window rate limit
+        const now = Date.now();
+        if (now - att.windowStart > RATE_LIMIT_WINDOW_MS) {
+          att.msgCount = 0;
+          att.windowStart = now;
+          if (att.violations > 0) att.violations--;
+        }
+
+        if (att.msgCount >= RATE_LIMIT_MAX_MSGS) {
+          att.violations++;
+          const windowRemaining = RATE_LIMIT_WINDOW_MS - (now - att.windowStart);
+          this.sendError(ws, 'rate-limited', 'Rate limit exceeded', windowRemaining);
+          ws.serializeAttachment(att);
+
+          if (att.violations >= MAX_VIOLATIONS) {
+            ws.close(1008, 'Rate limit exceeded');
+          }
+          return;
+        }
+
+        att.msgCount++;
+        ws.serializeAttachment(att);
+
+        // Forward raw text to the other peer — DO does not inspect relay content
+        this.broadcastExcept(ws, text);
         break;
       }
+
+      default:
+        this.sendError(ws, 'invalid-message', `Unknown message type: ${(msg as Record<string, unknown>).type}`);
+        return;
     }
 
     // Reset cleanup alarm on activity
@@ -112,10 +159,19 @@ export class SignalingRoom extends DurableObject {
         peerId: att.peerId,
       }));
     }
-    ws.close(code, reason);
+    try {
+      ws.close(code, reason);
+    } catch {
+      // Already closed
+    }
   }
 
-  async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
+  async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    const att = ws.deserializeAttachment() as PeerAttachment | null;
+    console.error('[signaling-room] WebSocket error', {
+      peerId: att?.peerId ?? 'unknown',
+      error: error instanceof Error ? error.message : String(error),
+    });
     ws.close(1011, 'WebSocket error');
   }
 
@@ -130,13 +186,23 @@ export class SignalingRoom extends DurableObject {
     }
   }
 
+  private sendError(ws: WebSocket, code: WsErrorCode, message: string, retryAfter?: number): void {
+    const error: { type: 'error'; message: string; code: WsErrorCode; retryAfter?: number } = {
+      type: 'error', message, code,
+    };
+    if (retryAfter !== undefined) error.retryAfter = retryAfter;
+    ws.send(JSON.stringify(error));
+  }
+
   private broadcastExcept(sender: WebSocket, message: string): void {
     for (const ws of this.ctx.getWebSockets()) {
       if (ws !== sender) {
         try {
           ws.send(message);
-        } catch {
-          // Peer already disconnected
+        } catch (err) {
+          console.debug('[signaling-room] Send failed (peer likely disconnected)', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     }

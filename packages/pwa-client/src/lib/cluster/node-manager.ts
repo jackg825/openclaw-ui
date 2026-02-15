@@ -1,9 +1,9 @@
 import type { ClusterNode, NodeConfig } from '@shared/cluster';
-import type { WebRTCConnectionManager } from '@/lib/webrtc/connection-manager';
+import type { ConnectionManager } from '@/lib/webrtc/connection-manager';
 import type { OpenClawProtocol } from '@/lib/openclaw/protocol';
 
 export interface ManagedNode {
-  connection: WebRTCConnectionManager;
+  connection: ConnectionManager;
   protocol: OpenClawProtocol;
   meta: ClusterNode;
 }
@@ -13,7 +13,7 @@ export class NodeManager extends EventTarget {
 
   async addNode(
     config: NodeConfig,
-    createConnection: (config: NodeConfig) => { connection: WebRTCConnectionManager; protocol: OpenClawProtocol },
+    createConnection: (config: NodeConfig) => { connection: ConnectionManager; protocol: OpenClawProtocol },
   ): Promise<void> {
     if (this.nodes.has(config.name)) {
       throw new Error(`Node "${config.name}" already exists`);

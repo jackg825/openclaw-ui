@@ -191,7 +191,7 @@ export function PairingDialog({ onConnect, resolving }: PairingDialogProps) {
         </CardTitle>
         <CardDescription>
           Enter the signaling server URL and the pairing code shown by your
-          sidecar to connect via WebRTC.
+          sidecar to connect.
         </CardDescription>
       </CardHeader>
       <form onSubmit={handleSubmit}>
@@ -228,7 +228,7 @@ export function PairingDialog({ onConnect, resolving }: PairingDialogProps) {
             <p className="text-sm text-muted-foreground animate-pulse">
               {resolving && 'Resolving pairing code...'}
               {!resolving && status === 'signaling' && 'Exchanging signaling data...'}
-              {!resolving && status === 'connecting' && 'Establishing WebRTC connection...'}
+              {!resolving && status === 'connecting' && 'Establishing connection...'}
               {!resolving && status === 'authenticating' && 'Authenticating with gateway...'}
             </p>
           )}

@@ -6,7 +6,11 @@ export async function handleRegisterDevice(request: Request, env: Env): Promise<
     return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { 'Content-Type': 'application/json' } });
   }
 
-  const body = (await request.json()) as { roomId?: string; deviceName?: string };
+  const body = (await request.json()) as {
+    roomId?: string;
+    deviceName?: string;
+    deviceType?: 'desktop' | 'mobile' | 'tablet' | 'unknown';
+  };
 
   if (!body.roomId) {
     return new Response(
@@ -24,6 +28,7 @@ export async function handleRegisterDevice(request: Request, env: Env): Promise<
   const device: DeviceEntry = {
     deviceToken,
     name: deviceName,
+    type: body.deviceType || 'unknown',
     lastSeen: now,
     registeredAt: now,
   };
@@ -37,7 +42,9 @@ export async function handleRegisterDevice(request: Request, env: Env): Promise<
     stableRoomId,
     userToken,
     name: deviceName,
+    type: body.deviceType || 'unknown',
     registeredAt: now,
+    lastSeen: now,
   };
 
   // Write both records and create the stable room

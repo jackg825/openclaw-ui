@@ -1,22 +1,23 @@
-import type { DataChannel } from 'node-datachannel';
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { MessageChunker } from './chunker.js';
+import type { WsSidecarSignaling } from './ws-signaling.js';
 
 const INTERNAL_TYPES = new Set(['device-registration', 'device-registration-ack']);
 
 export class Bridge {
   private ws: WebSocket | null = null;
   private chunker = new MessageChunker();
+  private signaling: WsSidecarSignaling | null = null;
 
   constructor(private gatewayUrl: string = 'ws://127.0.0.1:18789') {}
 
   /**
-   * Bridge a DataChannel to the local OpenClaw Gateway.
-   * NOTE: Does NOT set dc.onMessage — caller must wire that up
-   * and call handleDataChannelMessage() from the single callback.
+   * Bridge the WS relay signaling to the local OpenClaw Gateway.
+   * Gateway WS messages are chunked and sent via signaling.sendRelay().
    */
-  attach(dc: DataChannel): void {
+  attach(signaling: WsSidecarSignaling): void {
+    this.signaling = signaling;
     this.ws = new WebSocket(this.gatewayUrl);
 
     this.ws.on('open', () => {
@@ -24,46 +25,32 @@ export class Bridge {
       this.sendConnectHandshake();
     });
 
-    // WebSocket -> DataChannel (chunk if large, forward)
+    // Gateway → relay (chunk if large, forward to browser via DO)
     this.ws.on('message', (data: WebSocket.RawData) => {
       const str = data.toString('utf-8');
-      console.debug('[bridge] WS→DC relay', { size: str.length });
+      console.debug('[bridge] GW→relay', { size: str.length });
       const chunks = this.chunker.split(str);
       for (const chunk of chunks) {
-        dc.sendMessage(chunk);
+        signaling.sendRelay(chunk);
       }
     });
 
-    // Lifecycle
-    dc.onClosed(() => {
-      console.log('[bridge] DataChannel closed');
-      this.ws?.close();
-    });
-
     this.ws.on('close', () => {
-      console.log('[bridge] WebSocket closed');
-      dc.close();
+      console.warn('[bridge] Gateway WebSocket closed — relay messages will be dropped');
     });
 
     this.ws.on('error', (err: Error) => {
-      console.error('[bridge] WebSocket error:', err.message);
-      dc.close();
+      console.error('[bridge] Gateway WebSocket error:', err.message);
     });
   }
 
   /**
-   * Process a message received from the DataChannel.
+   * Process a relay message received from the browser (via DO).
    * Reassembles chunks and forwards protocol messages to the gateway.
    * @returns true if consumed (forwarded or chunk-in-progress), false if internal (caller should handle).
    */
-  handleDataChannelMessage(raw: string | Buffer | ArrayBuffer): boolean {
-    const text = typeof raw === 'string'
-      ? raw
-      : raw instanceof Buffer
-        ? raw.toString('utf-8')
-        : new TextDecoder().decode(raw);
-
-    const assembled = this.chunker.receive(text);
+  handleRelayMessage(data: string): boolean {
+    const assembled = this.chunker.receive(data);
     if (assembled === null) return true; // chunk in progress
 
     // Check for internal pairing messages — don't forward to gateway
@@ -78,10 +65,10 @@ export class Bridge {
     }
 
     if (this.ws?.readyState === WebSocket.OPEN) {
-      console.debug('[bridge] DC→WS relay', { size: assembled.length });
+      console.debug('[bridge] relay→GW', { size: assembled.length });
       this.ws.send(assembled);
     } else {
-      console.debug('[bridge] DC→WS dropped, gateway not connected', { size: assembled.length });
+      console.error('[bridge] relay→GW DROPPED: gateway not connected', { size: assembled.length });
     }
     return true;
   }
@@ -113,5 +100,6 @@ export class Bridge {
   close(): void {
     this.ws?.close();
     this.ws = null;
+    this.signaling = null;
   }
 }

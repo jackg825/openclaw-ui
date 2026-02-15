@@ -25,6 +25,7 @@ export interface DeviceRegistration {
 export interface DeviceInfo {
   deviceToken: string;
   name: string;
+  type: 'desktop' | 'mobile' | 'tablet' | 'unknown';
   lastSeen: string;
   registeredAt: string;
 }
@@ -34,6 +35,62 @@ export interface ReconnectResponse {
   devices?: DeviceInfo[];
   pairingCode?: string;
   pairingExpiresAt?: string;
+}
+
+// ── Google SSO & Settings Sync ──
+
+export interface AccountData {
+  googleSub: string;
+  email: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  userToken: string;
+  stableRoomId: string;
+  createdAt: string;
+  lastLoginAt: string;
+}
+
+export interface SyncedSettings {
+  theme: 'dark' | 'light' | 'system';
+  defaultSignalingUrl: string;
+  defaultRoomId: string;
+  voiceEnabled: boolean;
+  voiceProvider: 'web-speech' | 'deepgram';
+  deepgramApiKey: string | null;
+  updatedAt: string;
+}
+
+export interface GoogleUser {
+  sub: string;
+  email: string;
+  name: string;
+  picture: string;
+}
+
+export interface AuthResponse {
+  user: GoogleUser;
+  sessionToken: string;
+  expiresAt: number;
+  settings: SyncedSettings | null;
+  isNewAccount: boolean;
+  userToken: string;
+  stableRoomId: string;
+}
+
+// ── Security Error Codes ──
+
+export type WsErrorCode =
+  | 'rate-limited'      // Per-peer msg/s exceeded
+  | 'payload-too-large' // Single message exceeds size limit
+  | 'blocked'           // IP/device blocked
+  | 'auth-failed'       // Device token invalid or expired
+  | 'room-full'         // Room at max capacity
+  | 'invalid-message'   // JSON parse failure
+  | 'not-joined';       // Relay attempted before join
+
+export interface WsDisconnectReason {
+  code: WsErrorCode;
+  retryAfter?: number;
 }
 
 // ── WebSocket Signaling Protocol ──
@@ -46,22 +103,9 @@ export interface WsJoin {
   role: 'client' | 'sidecar';
 }
 
-export interface WsOffer {
-  type: 'offer';
-  sdp: string;
-  peerId?: string; // server → client: source peerId
-}
-
-export interface WsAnswer {
-  type: 'answer';
-  sdp: string;
-  peerId?: string;
-}
-
-export interface WsIce {
-  type: 'ice';
-  candidate: RTCIceCandidateInit;
-  peerId?: string;
+export interface WsRelay {
+  type: 'relay';
+  data: string;
 }
 
 export interface WsPeerJoined {
@@ -78,16 +122,9 @@ export interface WsPeerLeft {
 export interface WsError {
   type: 'error';
   message: string;
+  code?: WsErrorCode;
+  retryAfter?: number;
 }
 
-export type WsClientMessage = WsJoin | WsOffer | WsAnswer | WsIce;
-export type WsServerMessage = WsOffer | WsAnswer | WsIce | WsPeerJoined | WsPeerLeft | WsError;
-
-// TURN credentials
-export interface TurnCredentials {
-  iceServers: {
-    urls: string[];
-    username?: string;
-    credential?: string;
-  }[];
-}
+export type WsClientMessage = WsJoin | WsRelay;
+export type WsServerMessage = WsRelay | WsPeerJoined | WsPeerLeft | WsError;

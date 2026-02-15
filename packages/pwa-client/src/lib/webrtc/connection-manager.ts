@@ -1,23 +1,20 @@
-import type { WsServerMessage, TurnCredentials } from '@shared/webrtc-signaling';
+import type { WsServerMessage, WsErrorCode, WsDisconnectReason } from '@shared/webrtc-signaling';
 import { MessageChunker } from './chunker';
-import { DataChannelWrapper } from './data-channel';
 import { ReconnectionManager } from './reconnection';
 import { WsSignalingClient } from './ws-signaling-client';
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
-const STUN_SERVERS = ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'];
-const HANDSHAKE_TIMEOUT = 30_000; // 30s — max wait for offer→answer→DC open
+const HANDSHAKE_TIMEOUT = 30_000; // 30s — max wait for sidecar peer-joined
 
-export class WebRTCConnectionManager extends EventTarget {
-  private pc: RTCPeerConnection | null = null;
-  private dc: DataChannelWrapper | null = null;
+export class ConnectionManager extends EventTarget {
   private signaling: WsSignalingClient;
   private chunker = new MessageChunker();
   private reconnection = new ReconnectionManager();
   private state: ConnectionState = 'idle';
   private messageHandlers: ((message: string) => void)[] = [];
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  private rateLimitTimer: ReturnType<typeof setTimeout> | null = null;
   private roomId: string;
   private signalingUrl: string;
   private peerId: string;
@@ -47,82 +44,40 @@ export class WebRTCConnectionManager extends EventTarget {
 
     try {
       // 1. Join the signaling room via WebSocket
-      console.debug('[webrtc] Joining signaling room', { room: this.roomId });
+      console.debug('[connection] Joining relay room', { room: this.roomId });
       await this.signaling.join();
 
-      // 2. Get TURN credentials
-      let turnCreds: TurnCredentials | null = null;
-      try {
-        turnCreds = await this.signaling.getTurnCredentials();
-        console.debug('[webrtc] TURN credentials received', { servers: turnCreds.iceServers?.length ?? 0 });
-      } catch {
-        console.debug('[webrtc] TURN not available, using STUN only');
-      }
-
-      // 3. Create RTCPeerConnection
-      const iceServers: RTCIceServer[] = [{ urls: STUN_SERVERS }];
-      if (turnCreds?.iceServers) {
-        for (const server of turnCreds.iceServers) {
-          iceServers.push(server);
-        }
-      }
-      this.pc = new RTCPeerConnection({ iceServers });
-
-      // 4. Create DataChannel
-      console.debug('[webrtc] Creating DataChannel "openclaw"');
-      const rawDc = this.pc.createDataChannel('openclaw', { ordered: true });
-      this.dc = new DataChannelWrapper(rawDc);
-      this.dc.onMessage((msg) => this.handleRawMessage(msg));
-
-      this.dc.addEventListener('open', () => {
-        console.debug('[webrtc] DataChannel opened');
-        this.clearHandshakeTimer();
-        this.setState('connected');
-        this.reconnection.reset();
-        this.signaling.close();
-        this.dispatchEvent(new Event('connected'));
-      });
-
-      this.dc.addEventListener('close', () => {
-        console.debug('[webrtc] DataChannel closed');
-        this.handleDisconnect();
-      });
-
-      // 5. ICE candidate gathering
-      this.pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          console.debug('[webrtc] Local ICE candidate', { type: event.candidate.type, protocol: event.candidate.protocol });
-          this.signaling.sendIceCandidate(event.candidate.toJSON()).catch(() => {});
-        }
-      };
-
-      this.pc.onconnectionstatechange = () => {
-        if (this.pc?.connectionState === 'failed' || this.pc?.connectionState === 'disconnected') {
-          this.handleDisconnect();
-        }
-      };
-
-      // 6. Create and send offer
-      const offer = await this.pc.createOffer();
-      await this.pc.setLocalDescription(offer);
-      console.debug('[webrtc] Offer created and sent', { sdpLength: offer.sdp?.length });
-      await this.signaling.sendOffer(offer.sdp!);
-
-      // 7. Listen for answer and ICE candidates
-      this.signaling.onMessage((msg) => {
-        this.handleSignalingMessage(msg);
-      });
-
-      // 8. Detect signaling WebSocket drop (e.g., DO hibernation cleanup)
-      this.signaling.onDisconnect(() => {
-        if (this.state === 'connecting') {
-          this.handleDisconnect();
+      // 2. Listen for messages from DO
+      this.signaling.onMessage((msg: WsServerMessage) => {
+        switch (msg.type) {
+          case 'peer-joined':
+            // Sidecar connected → ready to exchange data
+            if (msg.role === 'sidecar') {
+              console.debug('[connection] Sidecar peer joined');
+              this.clearHandshakeTimer();
+              this.setState('connected');
+              this.reconnection.reset();
+              this.dispatchEvent(new Event('connected'));
+            }
+            break;
+          case 'relay':
+            // Data from sidecar → chunk reassembly
+            this.handleRawMessage(msg.data);
+            break;
+          case 'peer-left':
+            console.debug('[connection] Peer left');
+            this.handleDisconnect(undefined);
+            break;
         }
       });
 
-      // 9. Handshake timeout — if DC doesn't open within 30s, treat as failure
+      // 3. Detect WS drop → reconnection
+      this.signaling.onDisconnect((reason) => this.handleDisconnect(reason));
+
+      // 4. Handshake timeout (30s)
       this.handshakeTimer = setTimeout(() => {
         if (this.state === 'connecting') {
+          console.debug('[connection] Handshake timeout');
           this.handleDisconnect();
         }
       }, HANDSHAKE_TIMEOUT);
@@ -133,13 +88,13 @@ export class WebRTCConnectionManager extends EventTarget {
   }
 
   send(message: string): void {
-    if (!this.dc || this.dc.readyState !== 'open') {
-      throw new Error('DataChannel is not open');
+    if (!this.signaling.isOpen) {
+      throw new Error('WebSocket relay is not open');
     }
-    console.debug('[webrtc] Sending message', { size: message.length });
+    console.debug('[connection] Sending message', { size: message.length });
     const chunks = this.chunker.split(message);
     for (const chunk of chunks) {
-      this.dc.send(chunk);
+      this.signaling.sendRelay(chunk);
     }
   }
 
@@ -153,12 +108,12 @@ export class WebRTCConnectionManager extends EventTarget {
 
   disconnect(): void {
     this.clearHandshakeTimer();
+    if (this.rateLimitTimer) {
+      clearTimeout(this.rateLimitTimer);
+      this.rateLimitTimer = null;
+    }
     this.reconnection.cancel();
     this.signaling.close();
-    this.dc?.close();
-    this.pc?.close();
-    this.dc = null;
-    this.pc = null;
     this.chunker.clear();
     this.setState('idle');
     this.dispatchEvent(new Event('disconnected'));
@@ -167,7 +122,7 @@ export class WebRTCConnectionManager extends EventTarget {
   private setState(state: ConnectionState): void {
     const from = this.state;
     this.state = state;
-    console.debug('[webrtc] State transition', { from, to: state });
+    console.debug('[connection] State transition', { from, to: state });
   }
 
   private clearHandshakeTimer(): void {
@@ -180,7 +135,7 @@ export class WebRTCConnectionManager extends EventTarget {
   private handleRawMessage(raw: string): void {
     const assembled = this.chunker.receive(raw);
     if (assembled !== null) {
-      console.debug('[webrtc] Message received', { size: assembled.length });
+      console.debug('[connection] Message received', { size: assembled.length });
       for (const handler of this.messageHandlers) {
         handler(assembled);
       }
@@ -188,41 +143,43 @@ export class WebRTCConnectionManager extends EventTarget {
     }
   }
 
-  private async handleSignalingMessage(msg: WsServerMessage): Promise<void> {
-    console.debug('[webrtc] Signaling message', { type: msg.type });
-    switch (msg.type) {
-      case 'answer':
-        if (this.pc) {
-          try {
-            console.debug('[webrtc] Setting remote answer', { sdpLength: msg.sdp.length });
-            await this.pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
-          } catch {
-            this.handleDisconnect();
-          }
-        }
-        break;
-      case 'ice':
-        if (this.pc) {
-          this.pc.addIceCandidate(msg.candidate).catch(() => {});
-        }
-        break;
-    }
-  }
-
-  private handleDisconnect(): void {
+  private handleDisconnect(reason?: WsDisconnectReason): void {
     if (this.state === 'reconnecting' || this.state === 'idle') return;
-    console.debug('[webrtc] Disconnect detected, scheduling reconnection', { from: this.state });
+    console.debug('[connection] Disconnect detected', { from: this.state, reason });
+
+    // Permanent errors — no retry
+    if (reason?.code === 'blocked') {
+      this.setState('failed');
+      this.dispatchEvent(new CustomEvent('error', { detail: { message: 'Connection blocked', code: reason.code } }));
+      return;
+    }
 
     this.setState('reconnecting');
     this.dispatchEvent(new Event('reconnecting'));
     this.chunker.clear();
 
+    // Rate-limited — use server-specified delay
+    if (reason?.code === 'rate-limited' && reason.retryAfter) {
+      this.rateLimitTimer = setTimeout(() => {
+        this.rateLimitTimer = null;
+        if (this.state === 'idle') return;
+        this.reconnection.schedule(async () => {
+          try {
+            this.signaling.close();
+            this.signaling = new WsSignalingClient(this.signalingUrl, this.roomId, this.peerId, this.deviceToken);
+            await this.connect();
+            return this.state === 'connected';
+          } catch {
+            return false;
+          }
+        });
+      }, reason.retryAfter);
+      return;
+    }
+
     this.reconnection.schedule(async () => {
       try {
-        this.dc?.close();
-        this.pc?.close();
-        this.dc = null;
-        this.pc = null;
+        this.signaling.close();
 
         // Fresh signaling client for reconnection
         this.signaling = new WsSignalingClient(this.signalingUrl, this.roomId, this.peerId, this.deviceToken);

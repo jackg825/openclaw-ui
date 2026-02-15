@@ -2,6 +2,7 @@ import { Menu } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { ConnectionStatus } from '@/components/connection/ConnectionStatus';
+import { UserMenu } from './UserMenu';
 
 const ROUTE_LABELS: Record<string, string> = {
   '/': 'Chat',
@@ -42,6 +43,7 @@ export function Header({ onToggleSidebar }: HeaderProps) {
       )}
       <div className="flex-1" />
       <ConnectionStatus />
+      <UserMenu />
     </header>
   );
 }

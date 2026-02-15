@@ -15,4 +15,7 @@ tag = "v1"
 new_classes = ["SignalingRoom"]
 
 [vars]
-# TURN_KEY_ID and TURN_API_TOKEN should be set as secrets via wrangler secret put
+# ROOM_SECRET can be set as a secret via wrangler secret put for WS auth
+GOOGLE_CLIENT_ID = ""
+# SESSION_SECRET: set via `wrangler secret put SESSION_SECRET`
+# SETTINGS_ENCRYPTION_KEY: set via `wrangler secret put SETTINGS_ENCRYPTION_KEY`

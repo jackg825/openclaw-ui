@@ -1,16 +1,15 @@
-import { useState, useCallback, type ReactNode } from 'react';
+import { useState, useCallback } from 'react';
+import { Outlet } from 'react-router-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useSettingsSync } from '@/hooks/useSettingsSync';
 
-interface ShellProps {
-  children: ReactNode;
-}
-
-export function Shell({ children }: ShellProps) {
+export function Shell() {
+  useSettingsSync();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -82,7 +81,7 @@ export function Shell({ children }: ShellProps) {
         </aside>
 
         {/* Main content */}
-        <main className="flex-1 overflow-auto">{children}</main>
+        <main className="flex-1 overflow-auto"><Outlet /></main>
       </div>
       <StatusBar />
     </div>

@@ -1,13 +1,15 @@
 import WebSocket from 'ws';
-import type { WsServerMessage, TurnCredentials } from '@openclaw/shared-types';
+import type { WsServerMessage } from '@openclaw/shared-types';
 
 /**
- * WebSocket signaling client for the sidecar proxy.
+ * WebSocket relay client for the sidecar proxy.
  * Connects to Durable Object SignalingRoom via CF Worker /ws endpoint.
+ * In relay mode, the WS stays open for the entire session.
  */
 export class WsSidecarSignaling {
   private ws: WebSocket | null = null;
   private handlers: ((msg: WsServerMessage) => void)[] = [];
+  private disconnectHandlers: (() => void)[] = [];
   private baseUrl: string;
   private roomId: string;
   private peerId: string;
@@ -43,56 +45,59 @@ export class WsSidecarSignaling {
     });
 
     this.ws.on('message', (data) => {
+      let msg: WsServerMessage;
       try {
-        const msg: WsServerMessage = JSON.parse(data.toString());
-        console.debug('[ws-signaling] Received', { type: msg.type });
-        for (const handler of this.handlers) {
-          handler(msg);
-        }
+        msg = JSON.parse(data.toString());
       } catch {
-        console.debug('[ws-signaling] Malformed message, ignoring', { size: data.toString().length });
+        console.warn('[ws-signaling] Malformed JSON message, ignoring', { size: data.toString().length });
+        return;
+      }
+
+      console.debug('[ws-signaling] Received', { type: msg.type });
+      for (const handler of this.handlers) {
+        try {
+          handler(msg);
+        } catch (err) {
+          console.error('[ws-signaling] Message handler error', {
+            type: msg.type,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     });
 
     this.ws.on('close', (code) => {
       console.debug('[ws-signaling] WebSocket closed', { code });
+      for (const handler of this.disconnectHandlers) handler();
+    });
+
+    this.ws.on('error', () => {
+      console.debug('[ws-signaling] WebSocket error');
+      for (const handler of this.disconnectHandlers) handler();
     });
   }
 
-  async sendAnswer(sdp: string): Promise<void> {
-    this.send({ type: 'answer', sdp });
+  sendRelay(data: string): void {
+    this.send({ type: 'relay', data });
   }
 
-  async sendIceCandidate(candidate: { candidate?: string; sdpMid?: string | null; sdpMLineIndex?: number | null }): Promise<void> {
-    this.send({ type: 'ice', candidate });
-  }
-
-  async getTurnCredentials(): Promise<TurnCredentials> {
-    console.debug('[ws-signaling] Fetching TURN credentials');
-    const res = await fetch(`${this.baseUrl}/turn-creds`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId: this.roomId }),
-    });
-    if (!res.ok) {
-      let detail = `${res.status}`;
-      try {
-        const body = await res.json() as { error?: string };
-        if (body.error) detail = `${res.status}: ${body.error}`;
-      } catch { /* ignore parse failure */ }
-      throw new Error(`TURN creds failed (${detail})`);
-    }
-    return res.json() as Promise<TurnCredentials>;
+  get isOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
   }
 
   onMessage(handler: (msg: WsServerMessage) => void): void {
     this.handlers.push(handler);
   }
 
+  onDisconnect(handler: () => void): void {
+    this.disconnectHandlers.push(handler);
+  }
+
   close(): void {
     this.ws?.close();
     this.ws = null;
     this.handlers = [];
+    this.disconnectHandlers = [];
   }
 
   private send(data: Record<string, unknown>): void {

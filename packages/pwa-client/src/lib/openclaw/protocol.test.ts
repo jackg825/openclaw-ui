@@ -1,41 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { OpenClawProtocol } from './protocol';
-import type { WebRTCConnectionManager } from '../webrtc/connection-manager';
 
-// Mock WebRTCConnectionManager
-function createMockConnection() {
-  const messageHandlers: ((message: string) => void)[] = [];
+function createMockTransport() {
   let lastSent: string | null = null;
+  const sendFn = vi.fn((msg: string) => {
+    lastSent = msg;
+  });
 
-  const mock = {
-    send: vi.fn((msg: string) => {
-      lastSent = msg;
-    }),
-    onMessage: vi.fn((handler: (message: string) => void) => {
-      messageHandlers.push(handler);
-    }),
-    offMessage: vi.fn((handler: (message: string) => void) => {
-      const idx = messageHandlers.indexOf(handler);
-      if (idx >= 0) messageHandlers.splice(idx, 1);
-    }),
-    // Helper to simulate an incoming message
-    simulateMessage: (raw: string) => {
-      for (const h of messageHandlers) h(raw);
-    },
+  return {
+    sendFn,
     getLastSent: () => lastSent,
+    getSentParsed: (callIdx = 0) => JSON.parse(sendFn.mock.calls[callIdx][0]),
   };
-
-  return mock;
 }
 
 describe('OpenClawProtocol', () => {
-  let mockConnection: ReturnType<typeof createMockConnection>;
+  let transport: ReturnType<typeof createMockTransport>;
   let protocol: OpenClawProtocol;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    mockConnection = createMockConnection();
-    protocol = new OpenClawProtocol(mockConnection as unknown as WebRTCConnectionManager);
+    transport = createMockTransport();
+    protocol = new OpenClawProtocol(transport.sendFn);
   });
 
   afterEach(() => {
@@ -44,30 +30,28 @@ describe('OpenClawProtocol', () => {
   });
 
   describe('request/response', () => {
-    it('should send a request frame over the connection', async () => {
-      const promise = protocol.request('connect', { role: 'operator' });
+    it('should send a request frame', async () => {
+      const promise = protocol.request('chat.send', { sessionKey: 's1' });
 
-      expect(mockConnection.send).toHaveBeenCalledOnce();
-      const sent = JSON.parse(mockConnection.send.mock.calls[0][0]);
+      expect(transport.sendFn).toHaveBeenCalledOnce();
+      const sent = transport.getSentParsed();
       expect(sent.type).toBe('req');
-      expect(sent.method).toBe('connect');
-      expect(sent.params.role).toBe('operator');
-      expect(sent.id).toBeDefined();
+      expect(sent.method).toBe('chat.send');
+      expect(sent.params.sessionKey).toBe('s1');
 
-      // Respond
-      mockConnection.simulateMessage(
-        JSON.stringify({ type: 'res', id: sent.id, ok: true, payload: { version: 1 } }),
+      protocol.handleFrame(
+        JSON.stringify({ type: 'res', id: sent.id, ok: true, payload: { runId: 'r1' } }),
       );
 
       const result = await promise;
-      expect(result).toEqual({ version: 1 });
+      expect(result).toEqual({ runId: 'r1' });
     });
 
     it('should reject on error response', async () => {
       const promise = protocol.request('bad.method', {});
+      const sent = transport.getSentParsed();
 
-      const sent = JSON.parse(mockConnection.send.mock.calls[0][0]);
-      mockConnection.simulateMessage(
+      protocol.handleFrame(
         JSON.stringify({
           type: 'res',
           id: sent.id,
@@ -79,29 +63,31 @@ describe('OpenClawProtocol', () => {
       await expect(promise).rejects.toEqual({ code: 'NOT_FOUND', message: 'Method not found' });
     });
 
-    it('should timeout after 30 seconds', async () => {
+    it('should timeout after 30 seconds by default', async () => {
       const promise = protocol.request('slow.method', {});
-
-      // Advance time past the timeout
       vi.advanceTimersByTime(31_000);
-
       await expect(promise).rejects.toThrow('Request slow.method timed out');
+    });
+
+    it('should support custom timeout', async () => {
+      const promise = protocol.request('fast.method', {}, 5_000);
+      vi.advanceTimersByTime(6_000);
+      await expect(promise).rejects.toThrow('Request fast.method timed out');
     });
 
     it('should handle multiple concurrent requests', async () => {
       const p1 = protocol.request<{ a: number }>('method1', {});
       const p2 = protocol.request<{ b: number }>('method2', {});
 
-      expect(mockConnection.send).toHaveBeenCalledTimes(2);
+      expect(transport.sendFn).toHaveBeenCalledTimes(2);
+      const sent1 = transport.getSentParsed(0);
+      const sent2 = transport.getSentParsed(1);
 
-      const sent1 = JSON.parse(mockConnection.send.mock.calls[0][0]);
-      const sent2 = JSON.parse(mockConnection.send.mock.calls[1][0]);
-
-      // Respond to second first
-      mockConnection.simulateMessage(
+      // Respond out of order
+      protocol.handleFrame(
         JSON.stringify({ type: 'res', id: sent2.id, ok: true, payload: { b: 2 } }),
       );
-      mockConnection.simulateMessage(
+      protocol.handleFrame(
         JSON.stringify({ type: 'res', id: sent1.id, ok: true, payload: { a: 1 } }),
       );
 
@@ -110,70 +96,55 @@ describe('OpenClawProtocol', () => {
     });
   });
 
-  describe('connect', () => {
-    it('should send a connect request with ConnectParams', async () => {
-      const promise = protocol.connect({
-        role: 'operator',
-        minProtocol: 1,
-        maxProtocol: 1,
-        device: { name: 'Test', platform: 'test', version: '0.1.0' },
+  describe('chatSend', () => {
+    it('should send chat.send with ChatSendParams', async () => {
+      const promise = protocol.chatSend({
+        sessionKey: 'session-1',
+        message: 'Hello',
+        idempotencyKey: 'idem-1',
       });
 
-      const sent = JSON.parse(mockConnection.send.mock.calls[0][0]);
-      expect(sent.method).toBe('connect');
-      expect(sent.params.role).toBe('operator');
+      const sent = transport.getSentParsed();
+      expect(sent.method).toBe('chat.send');
+      expect(sent.params.sessionKey).toBe('session-1');
+      expect(sent.params.message).toBe('Hello');
 
-      mockConnection.simulateMessage(
-        JSON.stringify({
-          type: 'res',
-          id: sent.id,
-          ok: true,
-          payload: {
-            protocolVersion: 1,
-            gateway: { version: '0.12.1', name: 'TestGateway' },
-          },
-        }),
-      );
-
-      const result = await promise;
-      expect(result.protocolVersion).toBe(1);
-      expect(result.gateway.name).toBe('TestGateway');
-    });
-  });
-
-  describe('agentRun', () => {
-    it('should send an agent request', async () => {
-      const promise = protocol.agentRun('Hello', 'agent-123');
-
-      const sent = JSON.parse(mockConnection.send.mock.calls[0][0]);
-      expect(sent.method).toBe('agent');
-      expect(sent.params.prompt).toBe('Hello');
-      expect(sent.params.agentId).toBe('agent-123');
-
-      mockConnection.simulateMessage(
-        JSON.stringify({
-          type: 'res',
-          id: sent.id,
-          ok: true,
-          payload: { runId: 'run-abc', status: 'accepted' },
-        }),
+      protocol.handleFrame(
+        JSON.stringify({ type: 'res', id: sent.id, ok: true, payload: { runId: 'run-abc' } }),
       );
 
       const result = await promise;
       expect(result.runId).toBe('run-abc');
     });
+
+    it('should use 2-minute timeout for chat.send', async () => {
+      const promise = protocol.chatSend({
+        sessionKey: 's1',
+        message: 'test',
+        idempotencyKey: 'k1',
+      });
+
+      // Should NOT timeout at 30s
+      vi.advanceTimersByTime(31_000);
+      // Resolve to check it's still pending
+      const sent = transport.getSentParsed();
+      protocol.handleFrame(
+        JSON.stringify({ type: 'res', id: sent.id, ok: true, payload: { runId: 'r1' } }),
+      );
+
+      const result = await promise;
+      expect(result.runId).toBe('r1');
+    });
   });
 
-  describe('resolveApproval', () => {
-    it('should send an approval resolution', async () => {
-      const promise = protocol.resolveApproval('run-abc', 'approve');
+  describe('chatAbort', () => {
+    it('should send chat.abort', async () => {
+      const promise = protocol.chatAbort('run-123');
+      const sent = transport.getSentParsed();
+      expect(sent.method).toBe('chat.abort');
+      expect(sent.params.runId).toBe('run-123');
 
-      const sent = JSON.parse(mockConnection.send.mock.calls[0][0]);
-      expect(sent.method).toBe('exec.approval.resolve');
-      expect(sent.params.runId).toBe('run-abc');
-      expect(sent.params.action).toBe('approve');
-
-      mockConnection.simulateMessage(
+      protocol.handleFrame(
         JSON.stringify({ type: 'res', id: sent.id, ok: true }),
       );
 
@@ -181,56 +152,119 @@ describe('OpenClawProtocol', () => {
     });
   });
 
-  describe('events', () => {
-    it('should dispatch events received from the connection', () => {
-      const handler = vi.fn();
-      protocol.addEventListener('agent.text', handler);
+  describe('resolveApproval', () => {
+    it('should send exec.approval.resolve', async () => {
+      const promise = protocol.resolveApproval('run-abc', 'tc-1', 'approve');
+      const sent = transport.getSentParsed();
+      expect(sent.method).toBe('exec.approval.resolve');
+      expect(sent.params.runId).toBe('run-abc');
+      expect(sent.params.toolCallId).toBe('tc-1');
+      expect(sent.params.action).toBe('approve');
 
-      mockConnection.simulateMessage(
-        JSON.stringify({
-          type: 'event',
-          event: 'agent.text',
-          payload: { runId: 'run-1', content: 'Hello from agent' },
-        }),
+      protocol.handleFrame(
+        JSON.stringify({ type: 'res', id: sent.id, ok: true }),
       );
 
-      expect(handler).toHaveBeenCalledOnce();
-      expect(handler.mock.calls[0][0].detail).toEqual({
+      await expect(promise).resolves.toBeUndefined();
+    });
+  });
+
+  describe('typed events (on)', () => {
+    it('should dispatch chat events to typed handlers', () => {
+      const handler = vi.fn();
+      protocol.on('chat', handler);
+
+      const payload = {
         runId: 'run-1',
-        content: 'Hello from agent',
-      });
-    });
+        sessionKey: 's1',
+        seq: 1,
+        state: 'delta',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Hi' }], timestamp: 100 },
+      };
 
-    it('should dispatch approval requested events', () => {
-      const handler = vi.fn();
-      protocol.addEventListener('exec.approval.requested', handler);
-
-      mockConnection.simulateMessage(
-        JSON.stringify({
-          type: 'event',
-          event: 'exec.approval.requested',
-          payload: {
-            runId: 'run-2',
-            tool: 'bash',
-            args: { command: 'rm -rf /' },
-            description: 'Delete everything',
-          },
-        }),
+      protocol.handleFrame(
+        JSON.stringify({ type: 'event', event: 'chat', payload }),
       );
 
       expect(handler).toHaveBeenCalledOnce();
-      expect(handler.mock.calls[0][0].detail.tool).toBe('bash');
+      expect(handler.mock.calls[0][0]).toEqual(payload);
     });
 
-    it('should ignore non-JSON messages gracefully', () => {
+    it('should dispatch agent events', () => {
+      const handler = vi.fn();
+      protocol.on('agent', handler);
+
+      const payload = {
+        runId: 'run-1',
+        seq: 1,
+        stream: 'tool',
+        ts: Date.now(),
+        data: { phase: 'start', toolCallId: 'tc-1', name: 'read_file', args: { path: '/a.txt' } },
+      };
+
+      protocol.handleFrame(
+        JSON.stringify({ type: 'event', event: 'agent', payload }),
+      );
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler.mock.calls[0][0].stream).toBe('tool');
+    });
+
+    it('should return unsubscribe function', () => {
+      const handler = vi.fn();
+      const unsub = protocol.on('chat', handler);
+
+      protocol.handleFrame(
+        JSON.stringify({ type: 'event', event: 'chat', payload: { runId: 'r1', seq: 1 } }),
+      );
+      expect(handler).toHaveBeenCalledOnce();
+
+      unsub();
+
+      protocol.handleFrame(
+        JSON.stringify({ type: 'event', event: 'chat', payload: { runId: 'r2', seq: 2 } }),
+      );
+      expect(handler).toHaveBeenCalledOnce(); // Still 1
+    });
+
+    it('should handle multiple handlers for same event', () => {
+      const h1 = vi.fn();
+      const h2 = vi.fn();
+      protocol.on('agent', h1);
+      protocol.on('agent', h2);
+
+      protocol.handleFrame(
+        JSON.stringify({ type: 'event', event: 'agent', payload: { runId: 'r1', seq: 1 } }),
+      );
+
+      expect(h1).toHaveBeenCalledOnce();
+      expect(h2).toHaveBeenCalledOnce();
+    });
+
+    it('should not throw if handler throws', () => {
+      const badHandler = vi.fn(() => { throw new Error('boom'); });
+      const goodHandler = vi.fn();
+      protocol.on('chat', badHandler);
+      protocol.on('chat', goodHandler);
+
       expect(() => {
-        mockConnection.simulateMessage('not json');
+        protocol.handleFrame(
+          JSON.stringify({ type: 'event', event: 'chat', payload: { runId: 'r1', seq: 1 } }),
+        );
       }).not.toThrow();
+
+      expect(goodHandler).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('handleFrame edge cases', () => {
+    it('should ignore non-JSON messages', () => {
+      expect(() => protocol.handleFrame('not json')).not.toThrow();
     });
 
     it('should ignore responses with unknown IDs', () => {
       expect(() => {
-        mockConnection.simulateMessage(
+        protocol.handleFrame(
           JSON.stringify({ type: 'res', id: 'unknown-id', ok: true, payload: {} }),
         );
       }).not.toThrow();
@@ -240,10 +274,19 @@ describe('OpenClawProtocol', () => {
   describe('destroy', () => {
     it('should reject all pending requests', async () => {
       const promise = protocol.request('test', {});
+      protocol.destroy();
+      await expect(promise).rejects.toThrow('Protocol destroyed');
+    });
 
+    it('should clear all listeners', () => {
+      const handler = vi.fn();
+      protocol.on('chat', handler);
       protocol.destroy();
 
-      await expect(promise).rejects.toThrow('Protocol destroyed');
+      protocol.handleFrame(
+        JSON.stringify({ type: 'event', event: 'chat', payload: { runId: 'r1', seq: 1 } }),
+      );
+      expect(handler).not.toHaveBeenCalled();
     });
   });
 });

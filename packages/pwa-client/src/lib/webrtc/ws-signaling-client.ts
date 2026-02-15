@@ -1,13 +1,15 @@
-import type { WsServerMessage, TurnCredentials } from '@shared/webrtc-signaling';
+import type { WsServerMessage, WsErrorCode, WsDisconnectReason } from '@shared/webrtc-signaling';
 
 /**
- * WebSocket signaling client for the browser PWA.
+ * WebSocket relay client for the browser PWA.
  * Connects to Durable Object SignalingRoom via CF Worker /ws endpoint.
+ * In relay mode, the WS stays open for the entire session (not just signaling).
  */
 export class WsSignalingClient {
   private ws: WebSocket | null = null;
   private handlers: ((msg: WsServerMessage) => void)[] = [];
-  private disconnectHandlers: (() => void)[] = [];
+  private disconnectHandlers: ((reason?: WsDisconnectReason) => void)[] = [];
+  private errorHandlers: ((code: WsErrorCode, message: string, retryAfter?: number) => void)[] = [];
   private baseUrl: string;
   private roomId: string;
   private peerId: string;
@@ -45,66 +47,64 @@ export class WsSignalingClient {
     }));
 
     this.ws.onmessage = (event) => {
+      let msg: WsServerMessage;
       try {
-        const msg: WsServerMessage = JSON.parse(event.data);
-        console.debug('[signaling] Received', { type: msg.type });
-        for (const handler of this.handlers) {
-          handler(msg);
-        }
+        msg = JSON.parse(event.data);
       } catch {
-        console.debug('[signaling] Malformed message, ignoring');
+        console.warn('[signaling] Malformed JSON message, ignoring');
+        return;
+      }
+
+      console.debug('[signaling] Received', { type: msg.type });
+
+      if (msg.type === 'error' && msg.code) {
+        for (const handler of this.errorHandlers) {
+          handler(msg.code, msg.message, msg.retryAfter);
+        }
+      }
+
+      for (const handler of this.handlers) {
+        try {
+          handler(msg);
+        } catch (err) {
+          console.error('[signaling] Message handler error', {
+            type: msg.type,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     };
 
     this.ws.onclose = (event) => {
       console.debug('[signaling] WebSocket closed', { code: event.code });
-      for (const handler of this.disconnectHandlers) handler();
+      const reason = this.closeCodeToReason(event.code);
+      for (const handler of this.disconnectHandlers) handler(reason);
     };
 
     this.ws.onerror = () => {
       console.debug('[signaling] WebSocket error');
-      for (const handler of this.disconnectHandlers) handler();
+      for (const handler of this.disconnectHandlers) handler(undefined);
     };
   }
 
-  async sendOffer(sdp: string): Promise<void> {
-    console.debug('[signaling] Sending offer', { sdpLength: sdp.length });
-    this.send({ type: 'offer', sdp });
+  sendRelay(data: string): void {
+    this.send({ type: 'relay', data });
   }
 
-  async sendAnswer(sdp: string): Promise<void> {
-    console.debug('[signaling] Sending answer', { sdpLength: sdp.length });
-    this.send({ type: 'answer', sdp });
-  }
-
-  async sendIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
-    this.send({ type: 'ice', candidate });
-  }
-
-  async getTurnCredentials(): Promise<TurnCredentials> {
-    console.debug('[signaling] Fetching TURN credentials');
-    const res = await fetch(`${this.baseUrl}/turn-creds`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId: this.roomId }),
-    });
-    if (!res.ok) {
-      let detail = `${res.status}`;
-      try {
-        const body = await res.json() as { error?: string };
-        if (body.error) detail = `${res.status}: ${body.error}`;
-      } catch { /* ignore parse failure */ }
-      throw new Error(`TURN creds failed (${detail})`);
-    }
-    return res.json();
+  get isOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
   }
 
   onMessage(handler: (msg: WsServerMessage) => void): void {
     this.handlers.push(handler);
   }
 
-  onDisconnect(handler: () => void): void {
+  onDisconnect(handler: (reason?: WsDisconnectReason) => void): void {
     this.disconnectHandlers.push(handler);
+  }
+
+  onError(handler: (code: WsErrorCode, message: string, retryAfter?: number) => void): void {
+    this.errorHandlers.push(handler);
   }
 
   close(): void {
@@ -113,6 +113,16 @@ export class WsSignalingClient {
     this.ws = null;
     this.handlers = [];
     this.disconnectHandlers = [];
+    this.errorHandlers = [];
+  }
+
+  private closeCodeToReason(code: number): WsDisconnectReason | undefined {
+    switch (code) {
+      case 1008: return { code: 'blocked' };
+      case 1009: return { code: 'payload-too-large' };
+      case 1013: return { code: 'rate-limited' };
+      default: return undefined;
+    }
   }
 
   private send(data: Record<string, unknown>): void {

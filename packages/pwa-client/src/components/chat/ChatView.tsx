@@ -1,33 +1,74 @@
-import { useEffect, useRef } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { MessageSquare, Plug } from 'lucide-react';
+import { MessageSquare, Plug, ArrowDown } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { MessageBubble } from './MessageBubble';
 import { InputBar } from './InputBar';
+import { ApprovalBanner } from './ApprovalBanner';
+import { TokenCounter } from './TokenCounter';
 import { useChatStore } from '@/stores/chat';
 import { useConnectionStore } from '@/stores/connection';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 interface ChatViewProps {
   onSend: (message: string) => void;
+  onAbort?: () => void;
 }
 
-export function ChatView({ onSend }: ChatViewProps) {
+export function ChatView({ onSend, onAbort }: ChatViewProps) {
   const messages = useChatStore((s) => s.messages);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const status = useConnectionStore((s) => s.status);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showNewReplies, setShowNewReplies] = useState(false);
+
+  // IntersectionObserver: track whether sentinel (bottom) is visible
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const visible = entry.isIntersecting;
+        setIsAtBottom(visible);
+        if (visible) setShowNewReplies(false);
+      },
+      { threshold: 0.1 },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+
+  // Auto-scroll when new content arrives and user is at bottom
+  useEffect(() => {
+    if (isAtBottom) {
+      sentinelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } else if (isStreaming) {
+      // User scrolled up during streaming — show FAB
+      setShowNewReplies(true);
     }
-  }, [messages, isStreaming]);
+  }, [messages, isStreaming, isAtBottom]);
+
+  const scrollToBottom = useCallback(() => {
+    sentinelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    setShowNewReplies(false);
+  }, []);
+
+  // Keyboard shortcuts
+  useKeyboardShortcuts({
+    onAbortRun: onAbort,
+  });
 
   return (
     <div className="flex h-full flex-col">
+      <ApprovalBanner />
       <ScrollArea className="flex-1 p-4">
-        <div ref={scrollRef} className="flex flex-col gap-4">
+        <div ref={scrollContainerRef} className="flex flex-col gap-4">
           {messages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center py-20 animate-fade-in">
               <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
@@ -50,24 +91,27 @@ export function ChatView({ onSend }: ChatViewProps) {
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}
-          {isStreaming && (
-            <div className="flex justify-start">
-              <div className="flex items-center gap-3">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                  <MessageSquare className="h-3.5 w-3.5 text-primary" />
-                </div>
-                <div className="rounded-2xl bg-card border px-4 py-3">
-                  <div className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce" />
-                    <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
-                    <span className="h-2 w-2 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Sentinel div for IntersectionObserver */}
+          <div ref={sentinelRef} className="h-1" aria-hidden />
         </div>
       </ScrollArea>
+
+      {/* Floating "New replies" button when user scrolled up */}
+      {showNewReplies && (
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10">
+          <Button
+            variant="secondary"
+            size="sm"
+            className="rounded-full shadow-lg gap-1.5"
+            onClick={scrollToBottom}
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+            New replies
+          </Button>
+        </div>
+      )}
+
+      <TokenCounter usage={messages.length > 0 ? messages[messages.length - 1].usage : undefined} />
       <InputBar onSend={onSend} />
     </div>
   );
